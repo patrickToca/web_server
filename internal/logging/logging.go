@@ -1,16 +1,16 @@
 // Package logging configures the process-wide slog logger.
 //
-// Controlled by two environment variables:
+// Controlled by environment variables:
 //
 //	LOG_FORMAT = "text" (default) | "json"
 //	LOG_LEVEL  = "debug" | "info" (default) | "warn" | "error"
+//	LOG_FILE   = path to a log file (optional; empty means stderr only)
 //
-// It also routes Gin's default writers through slog so any third-party
-// Gin middleware that writes to gin.DefaultWriter lands in the same stream.
-//
-// Request-scoped logging (with request_id) is provided by the RequestID
-// middleware in internal/middleware; use middleware.LoggerFromGin(c) inside
-// handlers to get a logger that automatically includes request_id.
+// In a container, leave LOG_FILE unset. The process writes to stderr
+// and the platform captures it. Fly shows those lines with `fly logs`;
+// Docker shows them with `docker logs`. Writing to a file inside the
+// container is the wrong pattern: the file is destroyed on the next
+// deploy and nothing outside the container can read it.
 package logging
 
 import (
@@ -19,36 +19,21 @@ import (
 	"log"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/gin-gonic/gin"
 )
 
-// Setup builds the process logger from LOG_FORMAT / LOG_LEVEL, installs it
-// via slog.SetDefault, and wires Gin's default writers to it.
+// Setup builds the process logger from LOG_FORMAT / LOG_LEVEL /
+// LOG_FILE, installs it via slog.SetDefault, and wires Gin's default
+// writers to it.
 //
 // Returns the logger and a cleanup function that closes the log file
-// (when one is opened). Always call cleanup on shutdown.
+// when one was opened. Always call cleanup on shutdown.
+//
+// When LOG_FILE is empty (the container default), the logger writes to
+// os.Stderr and the cleanup is a no-op.
 func Setup() (*slog.Logger, func(), error) {
-	if err := os.MkdirAll("logs", 0o755); err != nil {
-		return nil, nil, err
-	}
-
-	f, err := os.OpenFile(filepath.Join("logs", "app.log"),
-		os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	// Terminal on stderr → mirror to both; otherwise → file only.
-	var dst io.Writer = f
-	isTTY := false
-	if stat, err := os.Stderr.Stat(); err == nil && (stat.Mode()&os.ModeCharDevice) != 0 {
-		isTTY = true
-		dst = io.MultiWriter(os.Stderr, f)
-	}
-
 	level := parseLevel(os.Getenv("LOG_LEVEL"))
 	opts := &slog.HandlerOptions{
 		Level:     level,
@@ -57,6 +42,25 @@ func Setup() (*slog.Logger, func(), error) {
 
 	format := strings.ToLower(strings.TrimSpace(os.Getenv("LOG_FORMAT")))
 
+	var dst io.Writer = os.Stderr
+	var cleanup func() = func() {}
+
+	if path := strings.TrimSpace(os.Getenv("LOG_FILE")); path != "" {
+		// File logging was explicitly requested. Create the
+		// directory and open the file. This path is for development
+		// where the operator wants a persistent log; in a container
+		// LOG_FILE is unset and this branch is skipped.
+		if err := os.MkdirAll(dirOf(path), 0o755); err != nil {
+			return nil, nil, err
+		}
+		f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+		if err != nil {
+			return nil, nil, err
+		}
+		dst = io.MultiWriter(os.Stderr, f)
+		cleanup = func() { _ = f.Close() }
+	}
+
 	var handler slog.Handler
 	switch format {
 	case "json":
@@ -64,8 +68,9 @@ func Setup() (*slog.Logger, func(), error) {
 	case "text":
 		handler = slog.NewTextHandler(dst, opts)
 	default:
-		// No explicit format: text on a terminal, JSON when redirected.
-		if isTTY {
+		// Auto-detect. In a container, LOG_FORMAT is set explicitly,
+		// so this branch is only reached in development.
+		if isTerminal(os.Stderr) {
 			handler = slog.NewTextHandler(dst, opts)
 		} else {
 			handler = slog.NewJSONHandler(dst, opts)
@@ -75,21 +80,29 @@ func Setup() (*slog.Logger, func(), error) {
 	logger := slog.New(handler)
 	slog.SetDefault(logger)
 
-	// Route the stdlib `log` package through slog too.
 	log.SetFlags(0)
 	log.SetOutput(slog.NewLogLogger(handler, slog.LevelInfo).Writer())
 
-	// Route Gin's default writers through slog as well. Note: these lines
-	// cannot carry request_id because Gin's default writer interface has no
-	// access to the request context. Use middleware.LoggerFromGin(c) inside
-	// handlers/middleware for request-correlated logging.
 	gin.DefaultWriter = &slogWriter{logger: logger, level: slog.LevelInfo}
 	gin.DefaultErrorWriter = &slogWriter{logger: logger, level: slog.LevelError}
 
-	cleanup := func() {
-		_ = f.Close()
-	}
 	return logger, cleanup, nil
+}
+
+func dirOf(path string) string {
+	i := strings.LastIndexByte(path, '/')
+	if i < 0 {
+		return "."
+	}
+	return path[:i]
+}
+
+func isTerminal(f *os.File) bool {
+	stat, err := f.Stat()
+	if err != nil {
+		return false
+	}
+	return (stat.Mode() & os.ModeCharDevice) != 0
 }
 
 func parseLevel(s string) slog.Level {
@@ -105,7 +118,6 @@ func parseLevel(s string) slog.Level {
 	}
 }
 
-// slogWriter adapts an *slog.Logger to io.Writer for Gin.
 type slogWriter struct {
 	logger *slog.Logger
 	level  slog.Level

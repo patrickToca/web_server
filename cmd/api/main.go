@@ -28,8 +28,13 @@ import (
 func main() {
 	logger, cleanup, err := logging.Setup()
 	if err != nil {
-		slog.Error("failed to set up logging", "error", err)
-		os.Exit(1)
+		// File logging was requested but failed. Fall back to stderr
+		// rather than refusing to start. The container is the case where
+		// this matters: LOG_FILE is unset, so err is nil.
+		slog.Error("failed to set up file logging; using stderr", "error", err)
+		logger = slog.New(slog.NewJSONHandler(os.Stderr, nil))
+		slog.SetDefault(logger)
+		cleanup = func() {}
 	}
 	defer cleanup()
 
