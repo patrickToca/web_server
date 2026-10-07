@@ -4,6 +4,10 @@
 .env
 .env.*
 !.env.example
+!.env.docker.local.example
+
+# The filled-in local Docker env file specifically.
+.env.docker.local
 
 # SOPS plaintext. Never commit the decrypted form.
 secrets.yaml
@@ -24,12 +28,20 @@ decrypted.*
 decrypted.secrets.*
 !secrets/secrets.enc.*
 
+# ---------------------------------------------------------------------------
+# Docker
+# ---------------------------------------------------------------------------
+# Local Compose override file for machine-specific settings.
+compose.override.yaml
+
 # Runtime logs
 logs/
 *.log
 
 # Binaries
 bin/
+dist/
+*.test
 
 # Node modules
 node_modules/
@@ -60,5 +72,5 @@ vendor/
 .DS_Store
 *.swp
 
-# folder and its content never to be committed
+# Local data directory used during development. Never to be committed
 data/**
