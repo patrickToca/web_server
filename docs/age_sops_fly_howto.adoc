@@ -12,11 +12,13 @@ ifdef::env-github,env-browser[:outfilesuffix: .adoc]
 :docdir: ../docs
 :sectnums:
 :sectnumlevels: 3
+:description: How MyWebApp stores, encrypts, transports, and loads its secrets using age, SOPS, and Fly.io Secrets, with the internal/credentials package tying the three together. Covers installation, key generation, editing the encrypted file in place, rotation, and the fail-closed behaviour in production.
+:keywords: age, sops, fly, secrets, encryption, AGE_KEY, secrets.enc.yaml, credentials, rotation, bootstrap, fail-closed, hmac, jwt
 
 = Age, SOPS, and Fly.io: Setup and Operation
 
 {author_name}
-v0.8.1, October 6th, 2026
+v0.8.3, October 7th, 2026
 
 '''
 
@@ -36,18 +38,18 @@ This document explains how `mywebapp` stores, encrypts, transports, and
 loads its secrets, and how those secrets reach a running process in
 production. It covers three tools and one small Go package:
 
-* **age** — a file encryption tool. It generates a key pair and encrypts
-  files to a recipient.
+* **age** — a file encryption tool. It generates a key pair and
+  encrypts files to a recipient.
 * **SOPS** — a tool that encrypts the *values* of a structured file
-  (YAML, JSON, dotenv) while leaving the *keys* readable. It uses age (or
-  another backend) as its cryptography.
+  (YAML, JSON, dotenv) while leaving the *keys* readable. It uses age
+  (or another backend) as its cryptography.
 * **Fly.io Secrets** — the platform's mechanism for injecting a small
   number of environment variables into a running machine, encrypted at
   rest and not readable back through the API.
 * **`internal/credentials`** — the Go package in this repository that
   ties the three together. It reads the age private key from the
-  environment, decrypts the SOPS file at boot, and sets each secret as an
-  environment variable so the rest of the application reads secrets
+  environment, decrypts the SOPS file at boot, and sets each secret as
+  an environment variable so the rest of the application reads secrets
   through `os.Getenv` exactly as it reads configuration.
 
 By the end of this document you will be able to:
@@ -58,6 +60,7 @@ By the end of this document you will be able to:
 . Store the age private key as a Fly Secret.
 . Deploy an application that decrypts its own secrets at boot.
 . Rotate a secret without taking the application down.
+. Rotate the age key itself without losing access to the ciphertext.
 
 <<<
 
@@ -69,10 +72,20 @@ The flow of a secret from your editor to the running process:
 .Request credentials flow with age, sops and fly in prod or in dev
 image::images/credentials_flow.svg[Credentials-flow diagram,align="center",width=100%]
 
-The ciphertext is public. It lives in git, it is in the container image,
-and anyone with a copy of the repository can see it. The **only** thing
-that is secret is the age private key, which lives on your machine and in
-Fly's encrypted vault, and nowhere else.
+The ciphertext is public. It lives in git, it is in the container
+image, and anyone with a copy of the repository can see it. The
+**only** thing that is secret is the age private key, which lives on
+your machine and in Fly's encrypted vault, and nowhere else.
+
+Two properties follow from this design:
+
+. **`git diff` on the secrets file is meaningful.** Adding a key
+   changes one line, and the line says which key. A pull request that
+   rotates a secret is reviewable in the same way as a code change.
+. **The container is self-contained.** It carries the ciphertext and
+   the loader. It needs one environment variable, `AGE_KEY`, to become
+   functional. There is no sidecar, no external secret service, no
+   network call to a secret store at boot.
 
 <<<
 
@@ -81,10 +94,10 @@ Fly's encrypted vault, and nowhere else.
 === What age is
 
 age (pronounced "ah-gay", from the French *agé*) is a file encryption
-tool. You give it a public key (a "recipient") and a file; it produces an
-encrypted file that only the holder of the corresponding private key can
-decrypt. It is deliberately small: no configuration file, no keyring, no
-trust model beyond "you have the key or you do not."
+tool. You give it a public key (a "recipient") and a file; it produces
+an encrypted file that only the holder of the corresponding private key
+can decrypt. It is deliberately small: no configuration file, no
+keyring, no trust model beyond "you have the key or you do not."
 
 SOPS uses age as one of its several cryptography backends. You do not
 interact with age directly once SOPS is configured, except to generate
@@ -137,17 +150,17 @@ The command prints the **public key** to stderr. It looks like:
 AGE-SECRET-KEY-1QZ4M6K9...
 ----
 
-The first line of output is a comment. The second line is the public key;
-write it down. The file `~/.config/sops/age/keys.txt` contains the private
-key. The format is two lines: a comment with the public key, then the
-private key itself.
+The first line of output is a comment. The second line is the public
+key; write it down. The file `~/.config/sops/age/keys.txt` contains the
+private key. The format is two lines: a comment with the public key,
+then the private key itself.
 
 [WARNING]
 ====
-Lose the private key and you lose the ability to decrypt every file that
-was encrypted to it. There is no recovery mechanism. There is no "reset
-password" link. If the key is gone, the ciphertext in your git history is
-permanently unreadable.
+Lose the private key and you lose the ability to decrypt every file
+that was encrypted to it. There is no recovery mechanism. There is no
+"reset password" link. If the key is gone, the ciphertext in your git
+history is permanently unreadable.
 
 Back the file up. Put a copy in a password manager, on an encrypted
 USB stick, or somewhere else that is not the machine the file lives on.
@@ -166,8 +179,8 @@ looser than this. The `chmod` is not optional.
 === The environment variable form
 
 Some tools, including the SOPS library and the `internal/credentials`
-package, accept the private key as an environment variable rather than a
-file. The variable name is `AGE_KEY`. This is the form Fly.io uses:
+package, accept the private key as an environment variable rather than
+a file. The variable name is `AGE_KEY`. This is the form Fly.io uses:
 
 [source,bash]
 ----
@@ -176,9 +189,9 @@ export AGE_KEY="$(cat ~/.config/sops/age/keys.txt)"
 
 `internal/credentials` reads `AGE_KEY` first, then falls back to
 `SOPS_AGE_KEY_FILE`, then to the default path
-`~/.config/sops/age/keys.txt`. In development the file already exists, so
-you do not need to set `AGE_KEY`. In a container the file does not exist,
-so you do.
+`~/.config/sops/age/keys.txt`. In development the file already exists,
+so you do not need to set `AGE_KEY`. In a container the file does not
+exist, so you do.
 
 <<<
 
@@ -186,9 +199,9 @@ so you do.
 
 === What SOPS is
 
-SOPS ("Secrets OPerationS") encrypts the **values** in a structured file
-while leaving the **keys** readable. A SOPS-encrypted YAML file looks
-like this:
+SOPS ("Secrets OPerationS") encrypts the **values** in a structured
+file while leaving the **keys** readable. A SOPS-encrypted YAML file
+looks like this:
 
 [source,yaml]
 ----
@@ -209,15 +222,15 @@ sops:
 Two properties follow from this:
 
 . **`git diff` is meaningful.** Adding a key changes one line, and the
-  line says which key. You can review a secrets change in a pull request
-  the same way you review a code change.
-. **You can add a key without decrypting the whole file.** The keys are
-  readable; only the values need the age key.
+  line says which key. You can review a secrets change in a pull
+  request the same way you review a code change.
+. **You can add a key without decrypting the whole file.** The keys
+  are readable; only the values need the age key.
 
 === Install
 
-SOPS is not in the Debian or Ubuntu repositories. Install the binary from
-the release page:
+SOPS is not in the Debian or Ubuntu repositories. Install the binary
+from the release page:
 
 [source,bash]
 ----
@@ -281,8 +294,13 @@ You should see the same YAML you wrote, with the values in plaintext.
 [NOTE]
 ====
 The `.gitignore` in this repository already excludes `secrets.yaml`,
-`secrets.yml`, and `secrets.env`. The plaintext file cannot be committed
-by accident; the pattern is there as a guard, not as the only defence.
+`secrets.yml`, and `secrets.env`. The plaintext file cannot be
+committed by accident; the pattern is there as a guard, not as the
+only defence.
+
+`secrets.enc.yaml` is **not** ignored. It is the ciphertext, it is
+safe to commit, and the review benefit described above depends on it
+being in the repository.
 ====
 
 === Editing the encrypted file
@@ -298,8 +316,8 @@ Instead, edit the encrypted file directly:
 sops secrets.enc.yaml
 ----
 
-`SOPS` decrypts the file to a temporary location, opens `$EDITOR` on it,
-and on save re-encrypts the result back to `secrets.enc.yaml`. The
+`SOPS` decrypts the file to a temporary location, opens `$EDITOR` on
+it, and on save re-encrypts the result back to `secrets.enc.yaml`. The
 plaintext is only ever in the editor's memory and in the temp file, and
 the temp file is deleted when the editor exits.
 
@@ -312,8 +330,8 @@ export EDITOR=nvim   # or vim, nano, emacs, code --wait, ...
 
 === Adding a key
 
-Open the file with `sops secrets.enc.yaml`, add a line in the editor, and
-save. For example, to add a new secret called `SMTP_PASSWORD`:
+Open the file with `sops secrets.enc.yaml`, add a line in the editor,
+and save. For example, to add a new secret called `SMTP_PASSWORD`:
 
 [source,yaml]
 ----
@@ -342,6 +360,19 @@ git push
 fly deploy
 ----
 
+A JWT secret rotation invalidates every existing access and refresh
+token. Users must log in again. That is the correct behaviour; a
+rotated secret that did not invalidate tokens would not be a rotation.
+
+A CSRF secret rotation invalidates every issued CSRF cookie. Users get
+a fresh one on their next GET. No user-visible effect.
+
+A database password rotation requires the new password to be set on the
+PostgreSQL role *before* the deployment rolls out. The rolling restart
+replaces machines one at a time; during the overlap, old machines still
+hold the old password. Coordinating the change with the role update
+avoids an authentication failure on the machines that start first.
+
 === Viewing a single value without opening the file
 
 For a quick check, without leaving a decrypted copy anywhere:
@@ -360,17 +391,18 @@ value into a shell command without opening an editor.
 
 === What Fly Secrets are
 
-Fly.io has a mechanism for injecting environment variables into a running
-machine. It is encrypted at rest, and the values are **write-only**: once
-set, neither `flyctl` nor the Fly API can read them back. The API servers
-can encrypt but not decrypt. This is a deliberate design choice and it is
-why Fly Secrets are suitable for the age private key.
+Fly.io has a mechanism for injecting environment variables into a
+running machine. It is encrypted at rest, and the values are
+**write-only**: once set, neither `flyctl` nor the Fly API can read
+them back. The API servers can encrypt but not decrypt. This is a
+deliberate design choice and it is why Fly Secrets are suitable for the
+age private key.
 
 The trade-off: you cannot audit the value of a Fly Secret through the
 platform. If you forget what you set, you overwrite it. There is no
-"show me the current value" command. For a bootstrap secret like `AGE_KEY`,
-this is fine: the value is on your machine, and if you lose it you
-re-upload it.
+"show me the current value" command. For a bootstrap secret like
+`AGE_KEY`, this is fine: the value is on your machine, and if you lose
+it you re-upload it.
 
 === Install `flyctl`
 
@@ -412,9 +444,19 @@ it does in this repository. The command:
 . Triggers a rolling restart of the application's machines so the new
    environment variable is visible to the next boot.
 
-The restart is automatic and unavoidable. Setting a secret is a deploy in
-miniature: the machines are replaced one at a time, with the new value
-visible to the replacements and not to the originals.
+The restart is automatic and unavoidable. Setting a secret is a deploy
+in miniature: the machines are replaced one at a time, with the new
+value visible to the replacements and not to the originals.
+
+The command above uses `cat`, which includes the comment lines in the
+key file. The comment lines start with `#` and `internal/credentials`
+handles them, but the `grep -v '^#'` form used elsewhere in this
+document is the cleaner choice:
+
+[source,bash]
+----
+fly secrets set AGE_KEY="$(grep -v '^#' ~/.config/sops/age/keys.txt)" --app mywebapp
+----
 
 === Listing secret names
 
@@ -436,8 +478,9 @@ fly secrets unset AGE_KEY --app mywebapp
 ----
 
 Removing a secret also triggers a rolling restart. The next boot will
-fail with "no age key available" if the application still needs it, which
-is the fail-closed behaviour `internal/credentials` is designed for.
+fail with "no age key available" if the application still needs it,
+which is the fail-closed behaviour `internal/credentials` is designed
+for.
 
 === The bulk form
 
@@ -449,10 +492,10 @@ them from stdin in dotenv format:
 fly secrets import --app mywebapp < .secrets.env
 ----
 
-For `mywebapp`, only `AGE_KEY` needs to be set this way. Everything else
-lives in `secrets.enc.yaml`, which is decrypted at boot. Adding the other
-secrets to Fly's vault would create a second source of truth and defeat
-the point of the design.
+For `mywebapp`, only `AGE_KEY` needs to be set this way. Everything
+else lives in `secrets.enc.yaml`, which is decrypted at boot. Adding
+the other secrets to Fly's vault would create a second source of truth
+and defeat the point of the design.
 
 <<<
 
@@ -460,9 +503,9 @@ the point of the design.
 
 === What the package does
 
-The package has one exported function, `Load()`, and one responsibility:
-to make the application's secrets visible in the process environment
-before any service is constructed.
+The package has one exported function, `Load()`, and one
+responsibility: to make the application's secrets visible in the
+process environment before any service is constructed.
 
 [source,go]
 ----
@@ -471,21 +514,21 @@ func Load() error
 
 `Load` performs four steps in order:
 
-. Ensures the age private key is available to the SOPS library. It reads
-  `AGE_KEY` from the environment and sets `SOPS_AGE_KEY` from it. If
-  `AGE_KEY` is absent, it checks `SOPS_AGE_KEY_FILE` and the default
+. Ensures the age private key is available to the SOPS library. It
+  reads `AGE_KEY` from the environment and sets `SOPS_AGE_KEY` from it.
+  If `AGE_KEY` is absent, it checks `SOPS_AGE_KEY_FILE` and the default
   path. If no key is found, it returns an error.
 . Decrypts `secrets.enc.yaml` using the SOPS library.
 . Validates that the secrets the application requires are present and,
-   for signing keys, at least 32 bytes long.
+  for signing keys, at least 32 bytes long.
 . Exports each secret in the `knownSecrets` list into the process
-   environment with `os.Setenv`.
+  environment with `os.Setenv`.
 
 The rest of the application does not know about SOPS, age, or Fly. It
-reads `JWT_SECRET`, `CSRF_SECRET`, and `DB_PASSWORD` through `os.Getenv`,
-the same way it reads `DB_HOST` and `PORT`. The distinction between
-configuration and secrets is in where the values come from, not in how
-the code consumes them.
+reads `JWT_SECRET`, `CSRF_SECRET`, and `DB_PASSWORD` through
+`os.Getenv`, the same way it reads `DB_HOST` and `PORT`. The
+distinction between configuration and secrets is in where the values
+come from, not in how the code consumes them.
 
 === Fail-closed behaviour
 
@@ -499,12 +542,18 @@ In production and staging (`APP_ENV` set to `production` or `staging`),
 * `JWT_SECRET` and `CSRF_SECRET` are the same value.
 
 In development (`APP_ENV` unset, or set to `development`), the same
-conditions produce warnings instead. The process starts. The consumer's
-own fallback applies: `auth.NewJWTService` and
-`middleware.LoadCSRFConfig` each generate a random per-process value when
-the corresponding variable is empty. That is what makes `go run` work
-without ceremony, and the warning is what makes the missing secret
-visible.
+conditions produce warnings instead. The process starts. The
+consumer's own fallback applies: `auth.NewJWTService` and
+`middleware.LoadCSRFConfig` each generate a random per-process value
+when the corresponding variable is empty. That is what makes `go run`
+work without ceremony, and the warning is what makes the missing
+secret visible.
+
+The asymmetry is deliberate. In production, a missing secret is a
+deployment error and the correct response is to refuse to serve. In
+development, a missing secret is an inconvenience and the correct
+response is to keep the developer moving while making the gap visible
+in the log.
 
 === Adding a new secret
 
@@ -518,9 +567,31 @@ Three edits, always in the same three places:
    `os.Getenv("MY_NEW_SECRET")`.
 
 The `knownSecrets` list is a closed set. A key that is in the encrypted
-file but not in the list is present in the decrypted map but not exported
-as an environment variable. This is deliberate: it means a typo in the
-encrypted file does not silently become a live environment variable.
+file but not in the list is present in the decrypted map but not
+exported as an environment variable. This is deliberate: it means a
+typo in the encrypted file does not silently become a live environment
+variable.
+
+The loader logs a single line at boot:
+
+[source]
+----
+INFO credentials loaded count=6
+----
+
+`count` is the number of secrets exported into the environment. If it
+is lower than the number of keys in `secrets.enc.yaml`, at least one
+key is not in the `knownSecrets` list and is being silently ignored.
+The log line is the only signal that the two have diverged; treat a
+change in `count` as a reason to inspect the file.
+
+=== Boot order
+
+`Load` must run before any service that reads a secret is constructed.
+In `cmd/api/main.go`, this means before `auth.NewJWTService`,
+`middleware.LoadCSRFConfig`, and `db.NewPool`. The call is placed at
+the top of `main`, immediately after the logging setup, so the
+environment is populated before anything else reads it.
 
 <<<
 
@@ -554,16 +625,16 @@ go run ./cmd/api
 ----
 
 If step 4 fails, the age key on this machine does not match the one the
-file was encrypted to. Recover the correct key or re-encrypt the file to
-the new machine's public key. There is no way to decrypt a file without
-the private key it was encrypted to.
+file was encrypted to. Recover the correct key or re-encrypt the file
+to the new machine's public key. There is no way to decrypt a file
+without the private key it was encrypted to.
 
 === Rotating the age key
 
-Rotating the age key means re-encrypting the SOPS file to a new recipient
-and changing the `AGE_KEY` secret on Fly. Existing ciphertext encrypted
-to the old key cannot be decrypted with the new one, so the re-encryption
-must happen before the old key is discarded.
+Rotating the age key means re-encrypting the SOPS file to a new
+recipient and changing the `AGE_KEY` secret on Fly. Existing ciphertext
+encrypted to the old key cannot be decrypted with the new one, so the
+re-encryption must happen before the old key is discarded.
 
 [source,bash]
 ----
@@ -580,7 +651,7 @@ SOPS_AGE_KEY_FILE=~/.config/sops/age/keys-new.txt \
     sops --decrypt secrets.enc.yaml > /dev/null
 
 # 4. Update Fly.
-fly secrets set AGE_KEY="$(cat ~/.config/sops/age/keys-new.txt)"
+fly secrets set AGE_KEY="$(grep -v '^#' ~/.config/sops/age/keys-new.txt)"
 
 # 5. Deploy.
 git add secrets.enc.yaml
@@ -596,15 +667,21 @@ fly deploy
 
 # 7. Replace the local key file.
 mv ~/.config/sops/age/keys-new.txt ~/.config/sops/age/keys.txt
+chmod 600 ~/.config/sops/age/keys.txt
 ----
 
 Step 2 keeps both recipients. If the new key is lost between step 2 and
 step 6, the old key still decrypts the file. Step 6 removes the old
 recipient once the new one is confirmed working.
 
+If you have other machines with the old key, they lose access at step
+6. Distribute the new key to them before running step 6, or accept that
+they will need to be re-provisioned.
+
 === Rotating a secret without rotating the key
 
-The common case. Open the SOPS file, replace the value, commit, redeploy.
+The common case. Open the SOPS file, replace the value, commit,
+redeploy.
 
 [source,bash]
 ----
@@ -616,11 +693,11 @@ fly deploy
 ----
 
 A JWT secret rotation invalidates every existing access and refresh
-token. Users must log in again. That is the correct behaviour; a rotated
-secret that did not invalidate tokens would not be a rotation.
+token. Users must log in again. That is the correct behaviour; a
+rotated secret that did not invalidate tokens would not be a rotation.
 
-A CSRF secret rotation invalidates every issued CSRF cookie. Users get a
-fresh one on their next GET. No user-visible effect.
+A CSRF secret rotation invalidates every issued CSRF cookie. Users get
+a fresh one on their next GET. No user-visible effect.
 
 === Checking what is deployed
 
@@ -643,9 +720,19 @@ The application logs a line at boot:
 INFO credentials loaded count=6
 ----
 
-`count` is the number of secrets exported into the environment. If it is
-lower than the number of keys in `secrets.enc.yaml`, at least one key is
-not in the `knownSecrets` list and is being silently ignored.
+`count` is the number of secrets exported into the environment. If it
+is lower than the number of keys in `secrets.enc.yaml`, at least one
+key is not in the `knownSecrets` list and is being silently ignored.
+
+=== Using the same key locally and in production
+
+The local key file and the Fly Secret hold the same value. That is
+intentional: the container that runs in production is built from the
+same repository as the one that runs locally, and both need to decrypt
+the same `secrets.enc.yaml`. If you want production to use different
+values from development, the correct approach is a second encrypted
+file (`secrets.prod.enc.yaml`) and a second recipient, not a second
+`AGE_KEY`.
 
 <<<
 
@@ -657,8 +744,10 @@ The error from `credentials.Load`. Causes, in order of likelihood:
 
 . `AGE_KEY` is unset on Fly. Check `fly secrets list`.
 . The age key file at `~/.config/sops/age/keys.txt` is missing or has
-   permissions looser than `0600`.
+  permissions looser than `0600`.
 . `SOPS_AGE_KEY_FILE` is set to a path that does not exist.
+. In a container, `AGE_KEY` was not passed. Check that the env file is
+   being read, or that `-e AGE_KEY=...` is on the command line.
 
 === `failed to decrypt secrets.enc.yaml: no identity matched any of the recipients`
 
@@ -669,8 +758,9 @@ re-encrypt the file to the current machine's public key.
 
 === `required secret JWT_SECRET is missing from secrets.enc.yaml`
 
-The key is absent from the file. Add it with `sops secrets.enc.yaml`, or,
-if this is development, accept the warning and let the fallback apply.
+The key is absent from the file. Add it with `sops secrets.enc.yaml`,
+or, if this is development, accept the warning and let the fallback
+apply.
 
 === `secret JWT_SECRET is 18 bytes; need at least 32 in production`
 
@@ -690,45 +780,89 @@ contains.
 
 === The application starts but login fails with "invalid token"
 
-The `JWT_SECRET` the running process sees is different from the one that
-issued the token. Either the secret was rotated between the token being
-issued and the request, or the deployment is running with a stale
+The `JWT_SECRET` the running process sees is different from the one
+that issued the token. Either the secret was rotated between the token
+being issued and the request, or the deployment is running with a stale
 environment. Check `fly logs` for the boot sequence and confirm
 `credentials.Load` ran before `auth.NewJWTService`.
+
+=== `sops` refuses to open the key file
+
+The permissions on `~/.config/sops/age/keys.txt` are looser than
+`0600`. Fix with:
+
+[source,bash]
+----
+chmod 600 ~/.config/sops/age/keys.txt
+----
+
+`age` and `sops` refuse to read a world-readable or group-readable key
+file. The check is deliberate: a key file that anyone on the system can
+read is a key file that anyone on the system can use.
+
+=== `sops` opens the file but the save fails
+
+The editor exited with a non-zero status, or the re-encryption failed.
+The most common cause is a syntax error in the edited YAML: SOPS parses
+the plaintext before re-encrypting, and a malformed file is rejected.
+The original `secrets.enc.yaml` is left unchanged; correct the YAML and
+try again.
+
+=== The Fly deployment restarts repeatedly after `fly secrets set`
+
+The new value is not one the application can use. Check the logs:
+
+[source,bash]
+----
+fly logs --app mywebapp
+----
+
+A `credentials.Load` error names the missing or invalid secret. Correct
+the value and run `fly secrets set` again, or roll back by re-setting
+the previous value.
 
 <<<
 
 == Part 7 — What not to do
 
 * **Do not commit `secrets.yaml`.** It is the plaintext form. The
-   `.gitignore` catches it, but the pattern is a guard, not a guarantee.
-   Verify with `git status --short` before every commit that touches
-   secrets.
+  `.gitignore` catches it, but the pattern is a guard, not a
+  guarantee. Verify with `git status --short` before every commit that
+  touches secrets.
 
-* **Do not decrypt to a file and re-encrypt.** Use `sops secrets.enc.yaml`
-   and edit in place. The decrypt-to-file workflow leaves plaintext on
-   disk.
+* **Do not decrypt to a file and re-encrypt.** Use
+  `sops secrets.enc.yaml` and edit in place. The decrypt-to-file
+  workflow leaves plaintext on disk.
 
 * **Do not put secrets in `.env`.** The `.env` file holds configuration
-   only. A secret in `.env` is a secret in two places, and the second
-   place is not encrypted.
+  only. A secret in `.env` is a secret in two places, and the second
+  place is not encrypted.
 
 * **Do not put secrets in `fly.toml` `[env]`.** The `[env]` block is
-   visible in the Fly dashboard and in the `fly.toml` file itself. Only
-   `AGE_KEY` should be a Fly Secret, and only because it is the bootstrap
-   key that decrypts everything else.
+  visible in the Fly dashboard and in the `fly.toml` file itself. Only
+  `AGE_KEY` should be a Fly Secret, and only because it is the
+  bootstrap key that decrypts everything else.
 
 * **Do not reuse the age key across projects.** One key per project
-   limits the blast radius of a compromise. If you have three projects,
-   you have three age keys, each stored as the `AGE_KEY` secret of the
-   corresponding Fly application.
+  limits the blast radius of a compromise. If you have three projects,
+  you have three age keys, each stored as the `AGE_KEY` secret of the
+  corresponding Fly application.
 
-* **Do not lose the age private key.** There is no recovery. If the key
-   is gone, the ciphertext in the repository is unreadable and the
-   secrets must be regenerated from scratch and re-encrypted to a new
-   key. The application can survive this if the new secrets are written
-   to a new SOPS file and deployed; it cannot survive losing the *values*
-   if they are only in the SOPS file. Keep a backup.
+* **Do not lose the age private key.** There is no recovery. If the
+  key is gone, the ciphertext in the repository is unreadable and the
+  secrets must be regenerated from scratch and re-encrypted to a new
+  key. The application can survive this if the new secrets are written
+  to a new SOPS file and deployed; it cannot survive losing the
+  *values* if they are only in the SOPS file. Keep a backup.
+
+* **Do not use a shared `AGE_KEY` across environments.** A staging
+  deployment that can decrypt the production secrets is a staging
+  deployment that can leak them. If you need staging, give it its own
+  key and its own encrypted file.
+
+* **Do not pass `AGE_KEY` on the command line in scripts.** Shell
+  history, `ps` output, and CI logs all capture command lines. Use an
+  env file, a CI secret, or `fly secrets set`.
 
 <<<
 
@@ -739,11 +873,12 @@ environment. Check `fly logs` for the boot sequence and confirm
 | Path | Purpose
 
 | `secrets.enc.yaml`
-| The committed, encrypted secrets file. Edited with `sops secrets.enc.yaml`.
+| The committed, encrypted secrets file. Edited with
+  `sops secrets.enc.yaml`.
 
 | `secrets.yaml`
-| The plaintext working copy. Created by `sops` during editing, deleted
-  on exit. Gitignored.
+| The plaintext working copy. Created by `sops` during editing,
+  deleted on exit. Gitignored.
 
 | `~/.config/sops/age/keys.txt`
 | The age private key on a developer machine. Mode `0600`.
@@ -760,6 +895,10 @@ environment. Check `fly logs` for the boot sequence and confirm
 
 | `.env.example`
 | The committed template for `.env`.
+
+| `.env.docker.local`
+| The untracked env file for the container. Contains `AGE_KEY` and
+  the database host. Gitignored.
 
 | `fly.toml`
 | The Fly application manifest. Contains non-secret configuration in
@@ -795,13 +934,16 @@ environment. Check `fly logs` for the boot sequence and confirm
 | `sops --extract '["KEY"]' --decrypt FILE`
 | Decrypt a single value.
 
+| `sops --extract '["sops"]["age"]' --decrypt-keys FILE`
+| Show the recipients the file is encrypted to.
+
 | `sops --add-age RECIPIENT FILE`
-| Add a new age recipient. The file remains decryptable by all existing
-  recipients as well.
+| Add a new age recipient. The file remains decryptable by all
+  existing recipients as well.
 
 | `sops --rm-age RECIPIENT FILE`
-| Remove an age recipient. The file is no longer decryptable with that
-  key.
+| Remove an age recipient. The file is no longer decryptable with
+  that key.
 
 | `fly secrets set KEY=VALUE`
 | Set a secret. Triggers a rolling restart.
@@ -811,6 +953,9 @@ environment. Check `fly logs` for the boot sequence and confirm
 
 | `fly secrets unset KEY`
 | Remove a secret. Triggers a rolling restart.
+
+| `fly secrets import`
+| Read secrets from stdin in dotenv format.
 
 | `fly logs`
 | Stream the application's logs.
@@ -838,8 +983,8 @@ environment. Check `fly logs` for the boot sequence and confirm
 
 | `SOPS_AGE_KEY_FILE`
 | No
-| A path to a file containing the age private key. Read if `AGE_KEY` is
-  unset.
+| A path to a file containing the age private key. Read if `AGE_KEY`
+  is unset.
 
 | `APP_ENV`
 | In production
@@ -872,8 +1017,13 @@ R2_SECRET_ACCESS_KEY: string
 
 The `knownSecrets` list in `internal/credentials/credentials.go` names
 the keys the loader exports into the environment. It is a closed set:
-a key in the file that is not on the list is silently ignored, and a key
-on the list that is not in the file is a hard error in production.
+a key in the file that is not on the list is silently ignored, and a
+key on the list that is not in the file is a hard error in production.
 
 When you add a secret, edit the file **and** the list. The two must
 agree.
+
+The `count` in the `credentials loaded count=N` log line is the number
+of keys the loader exported. If it does not match the number of keys in
+the file, the two have diverged. That log line is the only runtime
+signal of the divergence; there is no other warning.

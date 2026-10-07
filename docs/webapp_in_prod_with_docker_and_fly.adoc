@@ -12,11 +12,13 @@ ifdef::env-github,env-browser[:outfilesuffix: .adoc]
 :docdir: ../docs
 :sectnums:
 :sectnumlevels: 3
+:description: How to run the MyWebApp container in local Docker, Docker Compose, and on Fly.io. Covers the two most common runtime failures — a missing AGE_KEY and an unreachable PostgreSQL host — and documents the verified Compose setup that builds locally, connects to PostgreSQL, publishes port 8080, and returns {"status":"ok"} from /health.
+:keywords: docker, compose, dockerfile, fly, flyctl, age, sops, secrets, postgresql, host.docker.internal, bridge network, healthcheck, AGE_KEY, DB_HOST, container, production
 
 = Running in Production with Docker and Fly.io
 
 {author_name}
-v0.8.1, October 7th, 2026
+v0.8.3, October 7th, 2026
 
 '''
 
@@ -30,34 +32,64 @@ Email: {author_email}
 
 <<<
 
-This document describes how to run the MyWebApp container in production and
-local environments, focusing on the two most common runtime failures: a missing
-`AGE_KEY` and an unreachable PostgreSQL host. Both failures come from missing
-runtime configuration, not from the image itself.
+== Purpose and scope
 
-== Overview
+This document describes how to run the MyWebApp container in production
+and in local environments, focusing on the runtime configuration the
+image needs and the failures that occur when it is missing.
 
-The container image is self-contained. Every failure observed so far has been
-caused by configuration that must be supplied at *runtime*, not build time:
+The container image is self-contained. Every failure observed so far
+has been caused by configuration that must be supplied at *runtime*,
+not at build time. Two failures dominate:
 
-. A missing `AGE_KEY`, which the application requires to decrypt secrets.
-. A `DB_HOST` value that points to `localhost`, which inside a container refers
-  to the container itself, not the host running PostgreSQL.
+. A missing `AGE_KEY`, which the application requires to decrypt its
+  secrets file at boot. The process exits immediately when it is absent.
+. A `DB_HOST` value of `localhost`, which inside a container refers to
+  the container itself, not the host running PostgreSQL.
 
-This document covers how to supply both values correctly for local Docker,
-Docker Compose, and Fly.io.
+Both are addressed in this document. The Compose setup described here
+has been verified end-to-end: the image builds locally, the app
+connects to PostgreSQL, port 8080 is published, and `/health` returns
+`{"status":"ok"}`.
+
+By the end of this document you will be able to:
+
+. Run the container locally against a PostgreSQL instance on the host.
+. Use an untracked env file to keep runtime secrets out of the image
+  and out of git.
+. Bring the same setup up with `docker compose`.
+. Deploy the same image to Fly.io with `AGE_KEY` stored as a Fly Secret.
+. Diagnose the two common runtime failures from the container logs.
 
 <<<
 
-== Preventing the Missing `AGE_KEY` Error
+== The two runtime requirements
 
-The application fails fast when `AGE_KEY` is absent. This is intentional: a
-missing decryption key must never be silently ignored.
+The application will not start without both of these:
+
+. **`AGE_KEY`** — the age private key used by `internal/credentials` to
+  decrypt `secrets.enc.yaml`. Without it, the process exits with a
+  clear error before any service is constructed.
+. **A reachable PostgreSQL instance** — the connection is established
+  at startup. The host must be set correctly for the container's
+  network namespace.
+
+Everything else — port, log format, cookie flags, CSP policy — has a
+safe default and can be overridden if needed.
+
+<<<
+
+== Part 1 — Preventing the missing `AGE_KEY` error
+
+The application fails fast when `AGE_KEY` is absent. This is
+intentional: a missing decryption key must never be silently ignored.
+A server that starts without it is a server that will fail later, under
+load, in a harder-to-diagnose way.
 
 === Injecting the key at container start
 
-Pass the key directly when starting the container. Read it from your local age
-key file, stripping comment lines:
+Pass the key directly when starting the container. Read it from your
+local age key file, stripping comment lines:
 
 [source,bash]
 ----
@@ -67,15 +99,16 @@ docker run --rm \
   mywebapp:debug
 ----
 
-WARNING: Passing secrets on the command line exposes them to shell history and
-to any user who can run `ps`. This form is acceptable only for a quick local
-test. Use an env file or a platform secret for anything persistent.
+WARNING: Passing secrets on the command line exposes them to shell
+history and to any user who can run `ps`. This form is acceptable only
+for a quick local test. Use an env file or a platform secret for
+anything persistent.
 
 === Using an untracked env file for local development
 
 Create a local environment file containing the required runtime values:
 
-[source,bash]
+[source,.env.docker.local]
 ----
 AGE_KEY=AGE-SECRET-KEY-...
 DB_HOST=host.docker.internal
@@ -83,6 +116,7 @@ DB_PORT=5432
 DB_USER=pmjtoca
 DB_NAME=MyWebApp
 DB_SSLMODE=disable
+PORT=8080
 ----
 
 Then start the container with that file:
@@ -96,36 +130,43 @@ docker run --rm \
   mywebapp:debug
 ----
 
+`PORT=8080` is set explicitly in the file. The image's default port is
+already 8080, but setting it in the env file makes the Compose port
+mapping and the application's listen port agree without relying on the
+default.
+
 Add the env file to `.gitignore` so it is never committed:
 
 [source,gitignore]
 ----
 .env.docker.local
+.env.docker.local.*
 ----
 
-CAUTION: Never put `AGE_KEY` in the Dockerfile, in image layers, in Git, or in a
-committed `.env` file. Any of those locations turns a runtime secret into a
-permanent, widely distributed artifact.
+CAUTION: Never put `AGE_KEY` in the Dockerfile, in image layers, in
+Git, or in a committed `.env` file. Any of those locations turns a
+runtime secret into a permanent, widely distributed artifact.
 
 === Configuring the key as a Fly.io secret
 
-On Fly.io, store the key as a platform secret rather than an environment file:
+On Fly.io, store the key as a platform secret rather than an
+environment file:
 
 [source,bash]
 ----
-fly secrets set AGE_KEY="$(grep -v '^#' ~/.config/sops/age/keys.txt)"
+fly secrets set AGE_KEY="$(grep -v '^#' ~/.config/sops/age/keys.txt)" --app mywebapp
 ----
 
-Fly injects the secret into the running machine at start time, so it never
-appears in the image or in a repository.
+Fly injects the secret into the running machine at start time, so it
+never appears in the image or in a repository.
 
 <<<
 
-== Preventing the Database `localhost` Error
+== Part 2 — Preventing the database `localhost` error
 
 Inside a container, `localhost` refers to the container's own network
-namespace. PostgreSQL is almost never there. Set `DB_HOST` according to where
-the database actually runs:
+namespace. PostgreSQL is almost never there. Set `DB_HOST` according to
+where the database actually runs:
 
 [cols="1,2",options="header"]
 |===
@@ -151,69 +192,551 @@ Your local `docker run` command should therefore include:
 -e DB_HOST=host.docker.internal
 ----
 
+On Linux, `host.docker.internal` does not resolve by default. Add the
+mapping explicitly:
+
+[source,bash]
+----
+--add-host host.docker.internal:host-gateway
+----
+
+On Docker Desktop for macOS and Windows, the mapping is provided
+automatically; the `--add-host` flag is harmless but unnecessary there.
+
 In addition to setting `DB_HOST`, ensure that PostgreSQL itself accepts
 connections from Docker:
 
-* Its `listen_addresses` setting must include the interface the container
-  reaches it on.
-* Its `pg_hba.conf` must contain a rule permitting the Docker network or the
-  container's source address.
-* Any host firewall must allow traffic from the Docker bridge network to the
-  PostgreSQL port.
+* Its `listen_addresses` setting must include the interface the
+  container reaches it on. For a PostgreSQL listening only on
+  `localhost`, set it to `'*'` or to the Docker bridge address.
+* Its `pg_hba.conf` must contain a rule permitting the Docker network
+  or the container's source address, with `md5`, `scram-sha-256`, or
+  `trust` as appropriate.
+* Any host firewall must allow traffic from the Docker bridge network
+  to the PostgreSQL port. On a host with `ufw`, the Docker bridge
+  interface (`docker0`) is usually already permitted; on a host with
+  `firewalld`, an explicit rule may be required.
 
 <<<
 
-== Recommended Long-Term Setup
+== Part 3 — Docker Compose
 
-For local development, replace ad-hoc `docker run` invocations with a Compose
-file. This makes the runtime configuration explicit and reproducible.
+For local development, replace ad-hoc `docker run` invocations with a
+Compose file. This makes the runtime configuration explicit and
+reproducible, and it is what the repository ships with.
 
-Create `compose.yaml` in the repository root:
+=== The `compose.yaml` file
 
 [source,yaml]
 ----
 services:
   app:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: mywebapp:local
+    pull_policy: never          # never try to pull; build locally
     ports:
       - "8080:8080"
     env_file:
       - .env.docker.local
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    networks:
+      - mywebapp-net
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
+networks:
+  mywebapp-net:
+    driver: bridge
 ----
 
-Run it with:
+=== Why each field is there
+
+`build.context` and `dockerfile`::
+  Build the image from the repository root using the project's
+  `Dockerfile`. There is no registry involved.
+
+`image: mywebapp:local` and `pull_policy: never`::
+  Tag the locally built image and instruct Compose not to attempt a
+  registry pull. This is what "prevents registry pulls" in the commit
+  message refers to. Without `pull_policy: never`, a `docker compose up`
+  can go looking for `mywebapp:local` on Docker Hub and fail if a
+  network blip occurs.
+
+`ports`::
+  Publish the application's listen port on the host. The left side is
+  the host port; the right side is the container port. Both are 8080
+  because `.env.docker.local` sets `PORT=8080`.
+
+`env_file`::
+  Read `.env.docker.local` and pass each key as an environment variable
+  into the container. This is where `AGE_KEY`, `DB_HOST`, and the rest
+  of the runtime configuration live.
+
+`extra_hosts`::
+  Map `host.docker.internal` to the host gateway inside the container.
+  On Linux, Docker does not provide this name by default. This entry is
+  what makes the `DB_HOST=host.docker.internal` value in
+  `.env.docker.local` resolve to the host running PostgreSQL.
+
+`networks`::
+  Attach the container to a named bridge network. A named network is
+  used rather than the default `bridge` because the default network
+  has a fixed set of characteristics — no automatic service
+  discovery by name, a different gateway address — that have caused
+  problems in the past. The named network behaves predictably.
+
+`healthcheck.test`::
+  A `wget` against `/health`. The endpoint returns `{"status":"ok"}`
+  only when the database ping succeeds, so the healthcheck is a real
+  liveness signal, not just "the HTTP server is listening."
+  `wget -qO-` is a GET request; `--spider` was the form used in earlier
+  iterations and was not compatible with every `wget` build. The GET
+  form is what "GET-compatible healthcheck" in the commit message
+  refers to.
+
+`healthcheck.interval`, `timeout`, `retries`, `start_period`::
+  Reasonable defaults. `start_period: 10s` gives the application time
+  to load secrets and open the database pool before the first
+  healthcheck runs.
+
+`restart: unless-stopped`::
+  Restart the container if it exits, except when it was explicitly
+  stopped by the user. This is the standard choice for a long-running
+  service in a local Compose setup.
+
+=== Running it
 
 [source,bash]
 ----
-docker compose up --pull always
+docker compose up --build
 ----
 
-The `extra_hosts` entry is what makes `host.docker.internal` resolve on Linux,
-where Docker does not provide that name by default.
+The first run builds the image. Subsequent runs reuse it. To force a
+rebuild after a code change:
+
+[source,bash]
+----
+docker compose up --build --force-recreate
+----
+
+To run in the background:
+
+[source,bash]
+----
+docker compose up -d
+----
+
+To stop and remove the container:
+
+[source,bash]
+----
+docker compose down
+----
+
+=== Verifying the setup
+
+The commit that fixed the Compose setup verified four things. The same
+four checks apply to any new environment.
+
+==== 1. The image builds locally
+
+[source,bash]
+----
+docker compose build
+----
+
+Expected: a successful build, ending with a `Successfully tagged
+mywebapp:local` line. If the build fails, the error is usually a
+missing file referenced by the `Dockerfile` or a Go compilation error;
+the output names the file and line.
+
+==== 2. The app connects to PostgreSQL
+
+[source,bash]
+----
+docker compose logs app | grep -i "database\|postgres\|pool"
+----
+
+Expected: a log line indicating the pool was configured. If the app
+cannot reach PostgreSQL, the log contains a connection error naming the
+host and port it tried.
+
+If the app is running but the log shows a retry loop, confirm that:
+
+* `DB_HOST` in `.env.docker.local` is `host.docker.internal`, not
+  `localhost`.
+* PostgreSQL is listening on an interface reachable from the Docker
+  bridge, not only on the host's loopback.
+* `pg_hba.conf` permits the container's source address.
+
+==== 3. Port 8080 is published
+
+[source,bash]
+----
+docker compose ps
+----
+
+Expected: a line showing `0.0.0.0:8080->8080/tcp` in the `PORTS`
+column. If the column shows only `8080/tcp`, the `ports:` mapping in
+`compose.yaml` was not applied — check that the indentation is correct
+and that the service is the one you edited.
+
+==== 4. `/health` returns `{"status":"ok"}`
+
+[source,bash]
+----
+curl -s http://localhost:8080/health
+----
+
+Expected:
+
+[source,json]
+----
+{
+    "status": "ok",
+    "time": 1758567833,
+    "pool": {
+        "total": 5,
+        "idle": 5,
+        "acquired": 0,
+        "max": 25,
+        "constructing": 0,
+        "acquire_count": 12,
+        "empty_acquire": 0,
+        "canceled_acquire": 0,
+        "acquire_duration_ms": 3
+    }
+}
+----
+
+The `pool` block is present because `/health` pings the database. A
+`status` of `ok` means the ping succeeded. A `503` or a `status` of
+`degraded` means the database is not reachable; the `pool` block will
+show `total: 0` or a non-zero `canceled_acquire`.
+
+==== 5. The Compose healthcheck reports healthy
+
+[source,bash]
+----
+docker compose ps
+----
+
+Expected: a `STATUS` of `Up ... (healthy)` after the `start_period`
+elapses. A status of `(unhealthy)` after the retry count means the
+healthcheck is failing. Check `docker compose logs app` for the
+underlying error, and confirm that `wget` is available inside the
+image — the healthcheck depends on it.
 
 <<<
 
-== Keeping Production Values Out of Local Files
+== Part 4 — Fly.io deployment
+
+Fly.io runs the same image. The only difference is where the runtime
+configuration comes from: an env file locally, Fly Secrets in
+production.
+
+=== One-time setup
+
+[source,bash]
+----
+fly auth login
+fly launch --no-deploy        # generates/updates fly.toml, if needed
+fly secrets set AGE_KEY="$(grep -v '^#' ~/.config/sops/age/keys.txt)"
+fly deploy
+----
+
+`AGE_KEY` is the only Fly Secret that needs to be set. Every other
+secret — `JWT_SECRET`, `CSRF_SECRET`, `DB_PASSWORD`, the R2 credentials
+— lives in `secrets.enc.yaml`, which is decrypted at boot by
+`internal/credentials`. Storing them again as Fly Secrets would create
+a second source of truth and defeat the design. See
+link:age_sops_fly_howto.adoc[the age/SOPS/Fly how-to] for the full
+model.
+
+=== What goes in `fly.toml`
+
+Non-secret configuration. The `[env]` block is visible in the Fly
+dashboard and in the file itself, so it holds only values that are not
+sensitive:
+
+[source,toml]
+----
+[env]
+  PORT = "8080"
+  GIN_MODE = "release"
+  LOG_FORMAT = "json"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+
+[[http_service.checks]]
+  interval = "30s"
+  timeout = "5s"
+  grace_period = "10s"
+  method = "GET"
+  path = "/health"
+----
+
+`internal_port` matches the `PORT` the application listens on. The
+`[[http_service.checks]]` block is the Fly equivalent of the Compose
+healthcheck; it hits `/health` with a GET, which is the same
+GET-compatible form the Compose file uses.
+
+=== What must not go in `fly.toml`
+
+* `AGE_KEY` — it is a secret and belongs in `fly secrets`.
+* `JWT_SECRET`, `CSRF_SECRET` — same.
+* `DB_PASSWORD` — same.
+* Any R2 credential — same.
+
+If a value in `[env]` would be redacted in a log line, it belongs in
+`fly secrets`, not in `[env]`.
+
+=== Verifying the deployment
+
+[source,bash]
+----
+fly status
+fly logs
+curl -s https://mywebapp.fly.dev/health | jq .
+curl -s https://mywebapp.fly.dev/version | jq .
+----
+
+Expected: `status` is `ok`, the log contains a `credentials loaded`
+line with a non-zero count, and `/version` reports the tag and commit
+that were deployed.
+
+=== Rotating `AGE_KEY`
+
+See the "Rotating the age key" section of
+link:age_sops_fly_howto.adoc[the age/SOPS/Fly how-to]. The short
+version:
+
+[source,bash]
+----
+# 1. Generate a new key, re-encrypt secrets.enc.yaml to it, keep the old
+#    recipient as a fallback.
+# 2. Set the new key on Fly.
+fly secrets set AGE_KEY="$(cat ~/.config/sops/age/keys-new.txt)"
+
+# 3. Deploy and confirm healthy.
+fly deploy
+fly logs
+
+# 4. Remove the old recipient from secrets.enc.yaml, commit, deploy.
+----
+
+The re-encryption must happen before the old key is discarded. There is
+no way to decrypt a file with a key it was not encrypted to.
+
+<<<
+
+== Part 5 — Keeping production values out of local files
 
 Local env files are a convenience for development only. For production:
 
-* Keep every secret in Fly secrets (or your platform's equivalent secret store).
-* Keep non-secret configuration in the deployment configuration, not in a
-  committed env file.
-* Keep the application's fail-fast behavior. The process should continue to
-  exit immediately when the age key or the database configuration is missing,
-  because a server that starts without them is a server that will fail later,
-  under load, in a harder-to-diagnose way.
+* Keep every secret in Fly secrets, or your platform's equivalent
+  secret store.
+* Keep non-secret configuration in the deployment configuration, not
+  in a committed env file.
+* Keep the application's fail-fast behavior. The process should
+  continue to exit immediately when the age key or the database
+  configuration is missing.
+
+The `.gitignore` entries that support this:
+
+[source,gitignore]
+----
+.env
+.env.*
+!.env.example
+.env.docker.local
+.env.docker.local.*
+secrets.yaml
+secrets.yml
+secrets.env
+----
+
+`secrets.enc.yaml` is deliberately **not** ignored. It is the
+ciphertext, it is safe to commit, and `git diff` on it is meaningful
+because SOPS encrypts the values but leaves the keys readable.
+
+<<<
+
+== Part 6 — Troubleshooting
+
+=== `no age key available`
+
+The error from `credentials.Load`. Causes, in order of likelihood:
+
+. `AGE_KEY` is unset. Locally, check `.env.docker.local`. On Fly,
+   check `fly secrets list`.
+. The env file was not read. Confirm the `--env-file` flag or the
+   `env_file:` entry in `compose.yaml`.
+. The key file at `~/.config/sops/age/keys.txt` is missing or has
+   permissions looser than `0600`. `sops` and `age` refuse to read a
+   key file with looser permissions.
+
+=== `failed to decrypt secrets.enc.yaml: no identity matched any of the recipients`
+
+The `AGE_KEY` supplied to the container is not the one the file was
+encrypted to. Either the wrong key was passed, or the file was
+re-encrypted after the key was copied. Retrieve the correct key or
+re-encrypt the file to the current recipient.
+
+=== `connection refused` or `dial tcp ... connect: connection refused` on the database
+
+The container reached the host but PostgreSQL is not listening on the
+address it tried. Common causes:
+
+. `DB_HOST` is `localhost` and the container is talking to itself.
+   Set it to `host.docker.internal` and pass
+   `--add-host host.docker.internal:host-gateway`.
+. PostgreSQL is listening only on `127.0.0.1`. Set `listen_addresses`
+   to `'*'` or to the Docker bridge address.
+. `pg_hba.conf` has no rule for the container's source address.
+. A host firewall is blocking traffic from the Docker bridge.
+
+=== `password authentication failed for user "..."`
+
+The password in `DB_PASSWORD` (loaded from `secrets.enc.yaml`) does not
+match the password for the role in PostgreSQL. Either update the
+encrypted file, or change the role's password.
+
+=== Port 8080 is in use
+
+Another process holds the port. Find it:
+
+[source,bash]
+----
+sudo ss -ltnp | grep :8080
+----
+
+Either stop the other process, or change the host-side port mapping in
+`compose.yaml`:
+
+[source,yaml]
+----
+ports:
+  - "8081:8080"
+----
+
+The container still listens on 8080; only the host port changes. Update
+any client that connects to the host port accordingly.
+
+=== The Compose healthcheck never reports healthy
+
+Check the log:
+
+[source,bash]
+----
+docker compose logs app
+----
+
+If the application is logging normally, the healthcheck itself is
+failing. Two common causes:
+
+. `wget` is not present in the image. The healthcheck depends on it.
+   Either add `wget` to the runtime stage of the `Dockerfile`, or
+   change the healthcheck to use a tool the image does have, such as
+   `curl`.
+. The healthcheck runs before the database pool is ready and the retry
+   count is exhausted. Increase `start_period` and `retries` in
+   `compose.yaml`.
+
+=== `pull access denied for mywebapp` on `docker compose up`
+
+Compose is trying to pull the image from a registry instead of using
+the locally built one. Confirm that `compose.yaml` has both:
+
+[source,yaml]
+----
+image: mywebapp:local
+pull_policy: never
+----
+
+and that the build succeeds with `docker compose build` before
+`docker compose up`.
+
+=== The app starts but `/health` returns `degraded`
+
+The HTTP server is listening but the database ping fails. The `pool`
+block in the response shows the current pool state; a `total` of `0` or
+a non-zero `canceled_acquire` points at a connection problem. Check
+`docker compose logs app` for the underlying error.
+
+=== `docker compose up` cannot find `host.docker.internal`
+
+On Linux, this name is not provided by default. Confirm that the
+service has:
+
+[source,yaml]
+----
+extra_hosts:
+  - "host.docker.internal:host-gateway"
+----
+
+and that Docker is recent enough to support the `host-gateway` special
+value (Docker 20.10 or later).
 
 <<<
 
 == Summary
 
-. Supply `AGE_KEY` at runtime, through an untracked env file locally or a
-  platform secret in production.
-. Set `DB_HOST` to the real location of PostgreSQL, never to `localhost` from
-  inside a container.
-. Use `compose.yaml` for local runs, and Fly secrets for production.
+. Supply `AGE_KEY` at runtime, through an untracked env file locally
+  or a platform secret in production.
+. Set `DB_HOST` to the real location of PostgreSQL, never to
+  `localhost` from inside a container.
+. Use `compose.yaml` for local runs, with `pull_policy: never` to
+  prevent registry pulls, a named bridge network, and
+  `host.docker.internal:host-gateway` for host access.
+. Use a GET-compatible healthcheck against `/health`, which is a real
+  liveness signal because it pings the database.
+. Use Fly secrets for `AGE_KEY` and nothing else; everything else lives
+  in `secrets.enc.yaml`.
 . Preserve fail-fast behavior on missing configuration.
+
+<<<
+
+== Files referenced by this document
+
+[cols="1,3"]
+|===
+| Path | Purpose
+
+| `Dockerfile`
+| The image build definition.
+
+| `compose.yaml`
+| The local Compose service definition.
+
+| `.env.docker.local`
+| The untracked local env file. Gitignored. Contains `AGE_KEY`,
+  `DB_HOST`, and the other runtime values.
+
+| `fly.toml`
+| The Fly application manifest. Contains non-secret configuration only.
+
+| `secrets.enc.yaml`
+| The committed, SOPS-encrypted secrets file. Decrypted at boot by
+  `internal/credentials`.
+
+| `internal/credentials/credentials.go`
+| The loader that reads `AGE_KEY` and exports the decrypted secrets
+  into the environment.
+
+| `AGE_KEY`
+| The Fly Secret holding the age private key.
+|===
