@@ -1,0 +1,219 @@
+:doctype: article
+:toc: left
+:toc-title: Contents
+:icons: font
+:source-highlighter: coderay
+:author_name: patrick toca
+:author_email: link:mailto:[pmjtoca@gmail.com]
+:stylesheet: ../../asciidoctor.css
+:pdf-theme: ../../uked-theme.yml
+:relfileprefix: ./
+ifdef::env-github,env-browser[:outfilesuffix: .adoc]
+:docdir: ../docs
+:sectnums:
+:sectnumlevels: 3
+
+= Running in Production with Docker and Fly.io
+
+{author_name}
+v0.8.1, October 7th, 2026
+
+'''
+
+Creation Date: October 7th, 2026
+
+Author: {author_name}
+
+Email: {author_email}
+
+'''
+
+<<<
+
+This document describes how to run the MyWebApp container in production and
+local environments, focusing on the two most common runtime failures: a missing
+`AGE_KEY` and an unreachable PostgreSQL host. Both failures come from missing
+runtime configuration, not from the image itself.
+
+== Overview
+
+The container image is self-contained. Every failure observed so far has been
+caused by configuration that must be supplied at *runtime*, not build time:
+
+. A missing `AGE_KEY`, which the application requires to decrypt secrets.
+. A `DB_HOST` value that points to `localhost`, which inside a container refers
+  to the container itself, not the host running PostgreSQL.
+
+This document covers how to supply both values correctly for local Docker,
+Docker Compose, and Fly.io.
+
+<<<
+
+== Preventing the Missing `AGE_KEY` Error
+
+The application fails fast when `AGE_KEY` is absent. This is intentional: a
+missing decryption key must never be silently ignored.
+
+=== Injecting the key at container start
+
+Pass the key directly when starting the container. Read it from your local age
+key file, stripping comment lines:
+
+[source,bash]
+----
+docker run --rm \
+  -e AGE_KEY="$(grep -v '^#' ~/.config/sops/age/keys.txt)" \
+  ...
+  mywebapp:debug
+----
+
+WARNING: Passing secrets on the command line exposes them to shell history and
+to any user who can run `ps`. This form is acceptable only for a quick local
+test. Use an env file or a platform secret for anything persistent.
+
+=== Using an untracked env file for local development
+
+Create a local environment file containing the required runtime values:
+
+[source,bash]
+----
+AGE_KEY=AGE-SECRET-KEY-...
+DB_HOST=host.docker.internal
+DB_PORT=5432
+DB_USER=pmjtoca
+DB_NAME=MyWebApp
+DB_SSLMODE=disable
+----
+
+Then start the container with that file:
+
+[source,bash]
+----
+docker run --rm \
+  --env-file .env.docker.local \
+  --add-host host.docker.internal:host-gateway \
+  -p 8080:8080 \
+  mywebapp:debug
+----
+
+Add the env file to `.gitignore` so it is never committed:
+
+[source,gitignore]
+----
+.env.docker.local
+----
+
+CAUTION: Never put `AGE_KEY` in the Dockerfile, in image layers, in Git, or in a
+committed `.env` file. Any of those locations turns a runtime secret into a
+permanent, widely distributed artifact.
+
+=== Configuring the key as a Fly.io secret
+
+On Fly.io, store the key as a platform secret rather than an environment file:
+
+[source,bash]
+----
+fly secrets set AGE_KEY="$(grep -v '^#' ~/.config/sops/age/keys.txt)"
+----
+
+Fly injects the secret into the running machine at start time, so it never
+appears in the image or in a repository.
+
+<<<
+
+== Preventing the Database `localhost` Error
+
+Inside a container, `localhost` refers to the container's own network
+namespace. PostgreSQL is almost never there. Set `DB_HOST` according to where
+the database actually runs:
+
+[cols="1,2",options="header"]
+|===
+| Where PostgreSQL runs | Value for `DB_HOST`
+
+| On the host machine
+| `host.docker.internal`
+
+| In Docker Compose
+| The database service name, for example `db`
+
+| On Fly.io
+| The private or managed database hostname
+
+| Anywhere else
+| Its reachable DNS name or IP address
+|===
+
+Your local `docker run` command should therefore include:
+
+[source,bash]
+----
+-e DB_HOST=host.docker.internal
+----
+
+In addition to setting `DB_HOST`, ensure that PostgreSQL itself accepts
+connections from Docker:
+
+* Its `listen_addresses` setting must include the interface the container
+  reaches it on.
+* Its `pg_hba.conf` must contain a rule permitting the Docker network or the
+  container's source address.
+* Any host firewall must allow traffic from the Docker bridge network to the
+  PostgreSQL port.
+
+<<<
+
+== Recommended Long-Term Setup
+
+For local development, replace ad-hoc `docker run` invocations with a Compose
+file. This makes the runtime configuration explicit and reproducible.
+
+Create `compose.yaml` in the repository root:
+
+[source,yaml]
+----
+services:
+  app:
+    build: .
+    ports:
+      - "8080:8080"
+    env_file:
+      - .env.docker.local
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+----
+
+Run it with:
+
+[source,bash]
+----
+docker compose up --pull always
+----
+
+The `extra_hosts` entry is what makes `host.docker.internal` resolve on Linux,
+where Docker does not provide that name by default.
+
+<<<
+
+== Keeping Production Values Out of Local Files
+
+Local env files are a convenience for development only. For production:
+
+* Keep every secret in Fly secrets (or your platform's equivalent secret store).
+* Keep non-secret configuration in the deployment configuration, not in a
+  committed env file.
+* Keep the application's fail-fast behavior. The process should continue to
+  exit immediately when the age key or the database configuration is missing,
+  because a server that starts without them is a server that will fail later,
+  under load, in a harder-to-diagnose way.
+
+<<<
+
+== Summary
+
+. Supply `AGE_KEY` at runtime, through an untracked env file locally or a
+  platform secret in production.
+. Set `DB_HOST` to the real location of PostgreSQL, never to `localhost` from
+  inside a container.
+. Use `compose.yaml` for local runs, and Fly secrets for production.
+. Preserve fail-fast behavior on missing configuration.
