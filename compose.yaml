@@ -3,6 +3,8 @@
 # ---------------------------------------------------------------------------
 # Usage:
 #   docker compose up --pull always
+#       or
+#   docker compose up --pull always --build -d
 #
 # Secrets and connection details are read from .env.docker.local, which is
 # git-ignored. See .env.docker.local.example for the required variables.
