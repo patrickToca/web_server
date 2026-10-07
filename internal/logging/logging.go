@@ -43,7 +43,7 @@ func Setup() (*slog.Logger, func(), error) {
 	format := strings.ToLower(strings.TrimSpace(os.Getenv("LOG_FORMAT")))
 
 	var dst io.Writer = os.Stderr
-	var cleanup func() = func() {}
+	var cleanup = func() {}
 
 	if path := strings.TrimSpace(os.Getenv("LOG_FILE")); path != "" {
 		// File logging was explicitly requested. Create the

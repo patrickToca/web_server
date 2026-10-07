@@ -137,16 +137,14 @@ func (s *JWTService) RefreshTTL() time.Duration { return s.refreshTTL }
 func (s *JWTService) GenerateAccessToken(userID int32, username, role string) (string, error) {
 	now := time.Now()
 	claims := &Claims{
-		UserID:   userID,
-		Username: username,
-		Role:     role,
-		Typ:      TokenTypeAccess,
-		RegisteredClaims: jwt.RegisteredClaims{
-			Issuer:    s.issuer,
-			Subject:   username,
-			IssuedAt:  jwt.NewNumericDate(now),
-			ExpiresAt: jwt.NewNumericDate(now.Add(s.accessTTL)),
-		},
+		UserID:    userID,
+		Username:  username,
+		Role:      role,
+		Typ:       TokenTypeAccess,
+		Issuer:    s.issuer,
+		Subject:   username,
+		IssuedAt:  jwt.NewNumericDate(now),
+		ExpiresAt: jwt.NewNumericDate(now.Add(s.accessTTL)),
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	return token.SignedString(s.secretKey)
@@ -165,17 +163,15 @@ func (s *JWTService) GenerateRefreshToken(userID int32, username, role string) (
 
 	now := time.Now()
 	claims := &Claims{
-		UserID:   userID,
-		Username: username,
-		Role:     role,
-		Typ:      TokenTypeRefresh,
-		RegisteredClaims: jwt.RegisteredClaims{
-			Issuer:    s.issuer,
-			Subject:   username,
-			IssuedAt:  jwt.NewNumericDate(now),
-			ExpiresAt: jwt.NewNumericDate(now.Add(s.refreshTTL)),
-			ID:        jti,
-		},
+		UserID:    userID,
+		Username:  username,
+		Role:      role,
+		Typ:       TokenTypeRefresh,
+		Issuer:    s.issuer,
+		Subject:   username,
+		IssuedAt:  jwt.NewNumericDate(now),
+		ExpiresAt: jwt.NewNumericDate(now.Add(s.refreshTTL)),
+		ID:        jti,
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	signed, err := token.SignedString(s.secretKey)
