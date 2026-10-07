@@ -1,6 +1,6 @@
 module mywebapp
 
-go 1.26.2
+go 1.27.1
 
 require (
 	github.com/aws/aws-sdk-go-v2 v1.47.0

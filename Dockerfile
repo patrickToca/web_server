@@ -1,7 +1,7 @@
 # =============================================================================
 # Build stage
 # =============================================================================
-FROM golang:1.23-alpine AS build
+FROM golang:1.26.2-alpine AS build
 
 WORKDIR /src
 
@@ -22,7 +22,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build \
 # =============================================================================
 # Runtime stage
 # =============================================================================
-FROM alpine:3.20
+FROM alpine:3.23
 
 # ca-certificates for HTTPS calls (Cloudflare R2).
 # tzdata so timestamps render in the container's timezone.
