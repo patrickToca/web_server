@@ -1,0 +1,112 @@
+{{if .error}}
+<div class="bg-red-50 border-l-4 border-red-500 p-4 mb-4 rounded">
+    <div class="flex">
+        <div class="flex-shrink-0">
+            <svg class="h-5 w-5 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+            </svg>
+        </div>
+        <div class="ml-3">
+            <p class="text-sm text-red-700">{{.error}}</p>
+        </div>
+    </div>
+</div>
+{{end}}
+
+<div id="user-form-wrapper" class="bg-blue-50 p-6 rounded-lg mb-4 border border-blue-200 fade-in">
+    <h3 class="text-lg font-semibold text-gray-900 mb-4">
+        {{if .isNew}}Create New User{{else}}Edit User{{end}}
+    </h3>
+
+    <form id="user-form"
+          {{if .isNew}}
+          hx-post="/web/users"
+          hx-target="#user-tbody"
+          hx-swap="beforeend"
+          {{else}}
+          hx-put="/web/users/{{.user.ID}}"
+          hx-target="#user-{{.user.ID}}"
+          hx-swap="outerHTML"
+          {{end}}
+          class="space-y-4">
+
+        <input type="hidden" name="csrf_token" value="{{.csrf_token}}">
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+                <label for="username" class="block text-sm font-medium text-gray-700">Username *</label>
+                <input type="text"
+                       name="username"
+                       id="username"
+                       value="{{.user.Username}}"
+                       class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 transition"
+                       required
+                       {{if not .isNew}}readonly{{end}}>
+                {{if not .isNew}}
+                <p class="mt-1 text-xs text-gray-500">Username cannot be changed</p>
+                {{end}}
+            </div>
+
+            <div>
+                <label for="full_name" class="block text-sm font-medium text-gray-700">Full Name *</label>
+                <input type="text"
+                       name="full_name"
+                       id="full_name"
+                       value="{{.user.FullName}}"
+                       class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 transition"
+                       required>
+            </div>
+
+            <div>
+                <label for="email" class="block text-sm font-medium text-gray-700">Email *</label>
+                <input type="email"
+                       name="email"
+                       id="email"
+                       value="{{.user.Email}}"
+                       class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 transition"
+                       required>
+            </div>
+            <!--
+              The role field is deliberately absent. New users are always
+              created with role "user"; the role of an existing user is
+              changed through the dedicated role-change form.
+            -->
+        </div>
+
+        {{if .isNew}}
+        <div>
+            <label for="password" class="block text-sm font-medium text-gray-700">Password *</label>
+            <input type="password"
+                   name="password"
+                   id="password"
+                   class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 transition"
+                   required minlength="8">
+            <p class="mt-1 text-xs text-gray-500">Minimum 8 characters</p>
+        </div>
+        {{else}}
+        <div class="flex items-center">
+            <input type="checkbox"
+                   name="is_active"
+                   id="is_active"
+                   {{if .user.IsActive}}checked{{end}}
+                   class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">
+            <label for="is_active" class="ml-2 block text-sm text-gray-900">Active</label>
+        </div>
+        {{end}}
+
+        <div class="flex justify-end space-x-3 pt-4 border-t border-blue-200">
+            <button type="button"
+                    class="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50 transition"
+                    onclick="document.getElementById('user-form-wrapper').remove()">
+                Cancel
+            </button>
+            <button type="submit"
+                    class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition flex items-center gap-2">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4"/>
+                </svg>
+                {{if .isNew}}Create{{else}}Update{{end}} User
+            </button>
+        </div>
+    </form>
+</div>

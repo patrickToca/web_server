@@ -1,0 +1,300 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg"
+     viewBox="0 0 1500 1560"
+     width="1500" height="1560"
+     font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif"
+     font-size="12">
+
+  <defs>
+    <style>
+      .actor-title   { font-size: 13px; font-weight: 600; fill: #111827; text-anchor: middle; }
+      .actor-sub     { font-size: 10px; fill: #6b7280; text-anchor: middle; }
+
+      .lifeline      { stroke: #9ca3af; stroke-width: 1; stroke-dasharray: 4 4; }
+      .activation    { fill: #dbeafe; stroke: #2563eb; stroke-width: 1; }
+
+      .msg           { fill: none; stroke: #374151; stroke-width: 1.4;
+                       marker-end: url(#arrow-dark); }
+      .msg-return    { fill: none; stroke: #6b7280; stroke-width: 1.2;
+                       stroke-dasharray: 5 3; marker-end: url(#arrow-gray); }
+      .msg-async     { fill: none; stroke: #7c3aed; stroke-width: 1.4;
+                       stroke-dasharray: 6 4; marker-end: url(#arrow-violet); }
+
+      .msg-label     { font-size: 11px; fill: #111827; }
+      .msg-note      { font-size: 10px; fill: #6b7280; font-style: italic; }
+
+      .fragment-box  { fill: #f9fafb; stroke: #9ca3af; stroke-width: 1; }
+      .fragment-tab  { fill: #e5e7eb; stroke: #9ca3af; stroke-width: 1; }
+      .fragment-lbl  { font-size: 10px; font-weight: 600; fill: #374151; }
+
+      .step-title    { font-size: 14px; font-weight: 700; fill: #1f2937; }
+      .step-sub      { font-size: 11px; fill: #6b7280; }
+    </style>
+
+    <marker id="arrow-dark" viewBox="0 0 10 10" refX="9" refY="5"
+            markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#374151"/>
+    </marker>
+    <marker id="arrow-gray" viewBox="0 0 10 10" refX="9" refY="5"
+            markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#6b7280"/>
+    </marker>
+    <marker id="arrow-violet" viewBox="0 0 10 10" refX="9" refY="5"
+            markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#7c3aed"/>
+    </marker>
+  </defs>
+
+  <!-- Background -->
+  <rect x="0" y="0" width="1500" height="1560" fill="#ffffff"/>
+
+  <!-- Title -->
+  <text x="40" y="38" font-size="20" font-weight="700" fill="#111827">
+    MyWebApp — sequence diagram
+  </text>
+  <text x="40" y="58" class="msg-note">
+    Anonymous visitor loads the Home page, signs in, and loads the admin user list.
+  </text>
+
+  <!-- =================================================================
+       Actor headers
+       ================================================================= -->
+  <!-- Lifeline X positions: 120, 300, 480, 660, 840, 1020, 1200, 1380 -->
+
+  <!-- Browser -->
+  <rect x="40" y="80" width="160" height="46" fill="#eef2ff" stroke="#6366f1" rx="6"/>
+  <text x="120" y="100" class="actor-title">Browser</text>
+  <text x="120" y="116" class="actor-sub">cookies + HTMX</text>
+
+  <!-- Gin router -->
+  <rect x="220" y="80" width="160" height="46" fill="#fef3c7" stroke="#d97706" rx="6"/>
+  <text x="300" y="100" class="actor-title">Gin router</text>
+  <text x="300" y="116" class="actor-sub">middleware chain</text>
+
+  <!-- AuthHandler -->
+  <rect x="400" y="80" width="160" height="46" fill="#dbeafe" stroke="#2563eb" rx="6"/>
+  <text x="480" y="100" class="actor-title">AuthHandler</text>
+  <text x="480" y="116" class="actor-sub">login / logout</text>
+
+  <!-- WebHandler -->
+  <rect x="580" y="80" width="160" height="46" fill="#dbeafe" stroke="#2563eb" rx="6"/>
+  <text x="660" y="100" class="actor-title">WebHandler</text>
+  <text x="660" y="116" class="actor-sub">list / CRUD</text>
+
+  <!-- UserService -->
+  <rect x="760" y="80" width="160" height="46" fill="#d1fae5" stroke="#059669" rx="6"/>
+  <text x="840" y="100" class="actor-title">UserService</text>
+  <text x="840" y="116" class="actor-sub">business logic</text>
+
+  <!-- SessionService -->
+  <rect x="940" y="80" width="160" height="46" fill="#d1fae5" stroke="#059669" rx="6"/>
+  <text x="1020" y="100" class="actor-title">SessionService</text>
+  <text x="1020" y="116" class="actor-sub">sessions table</text>
+
+  <!-- JWTService -->
+  <rect x="1120" y="80" width="160" height="46" fill="#ede9fe" stroke="#7c3aed" rx="6"/>
+  <text x="1200" y="100" class="actor-title">JWTService</text>
+  <text x="1200" y="116" class="actor-sub">mint / validate</text>
+
+  <!-- PostgreSQL -->
+  <rect x="1300" y="80" width="160" height="46" fill="#fee2e2" stroke="#dc2626" rx="6"/>
+  <text x="1380" y="100" class="actor-title">PostgreSQL</text>
+  <text x="1380" y="116" class="actor-sub">users + sessions</text>
+
+  <!-- =================================================================
+       Lifelines
+       ================================================================= -->
+  <line x1="120"  y1="126" x2="120"  y2="1500" class="lifeline"/>
+  <line x1="300"  y1="126" x2="300"  y2="1500" class="lifeline"/>
+  <line x1="480"  y1="126" x2="480"  y2="1500" class="lifeline"/>
+  <line x1="660"  y1="126" x2="660"  y2="1500" class="lifeline"/>
+  <line x1="840"  y1="126" x2="840"  y2="1500" class="lifeline"/>
+  <line x1="1020" y1="126" x2="1020" y2="1500" class="lifeline"/>
+  <line x1="1200" y1="126" x2="1200" y2="1500" class="lifeline"/>
+  <line x1="1380" y1="126" x2="1380" y2="1500" class="lifeline"/>
+
+  <!-- =================================================================
+       Phase 1 — Anonymous visitor loads /
+       ================================================================= -->
+  <text x="40" y="160" class="step-title">1. Anonymous visitor loads the public Home page</text>
+  <text x="40" y="178" class="step-sub">A visitor with no session opens http://localhost:8080/</text>
+
+  <!-- Browser → Gin -->
+  <line x1="120" y1="200" x2="300" y2="200" class="msg"/>
+  <text x="130" y="194" class="msg-label">GET /</text>
+
+  <!-- Activation on Gin -->
+  <rect x="292" y="200" width="16" height="290" class="activation"/>
+
+  <!-- Gin → WebHandler (HomePage) -->
+  <line x1="300" y1="240" x2="660" y2="240" class="msg"/>
+  <text x="310" y="234" class="msg-label">HomePage (OptionalAuthMiddleware: no claims)</text>
+
+  <!-- Activation on WebHandler -->
+  <rect x="652" y="240" width="16" height="210" class="activation"/>
+
+  <!-- WebHandler → R2 (presign) — note: this is optional, keep it short -->
+  <line x1="660" y1="280" x2="1200" y2="280" class="msg-async"/>
+  <text x="670" y="274" class="msg-label">presign welcome image (R2, optional)</text>
+  <text x="670" y="292" class="msg-note">skipped if R2 is not configured</text>
+
+  <line x1="1200" y1="310" x2="660" y2="310" class="msg-return"/>
+  <text x="670" y="304" class="msg-label">presigned URL</text>
+
+  <!-- WebHandler → Browser -->
+  <line x1="660" y1="380" x2="120" y2="380" class="msg-return"/>
+  <text x="130" y="374" class="msg-label">HTML (public hero, IS_AUTHED = false)</text>
+  <text x="130" y="392" class="msg-note">Set-Cookie: csrf_token=&lt;token&gt;</text>
+
+  <!-- Deactivate WebHandler -->
+  <rect x="652" y="240" width="16" height="160" class="activation" fill="none" stroke="none"/>
+  <!-- (visual only — the box above already covers 240–450) -->
+
+  <!-- Gin → Browser (CSRF cookie already covered by WebHandler response) -->
+
+  <!-- Deactivate Gin -->
+  <rect x="292" y="200" width="16" height="290" class="activation" fill="none" stroke="none"/>
+
+  <!-- =================================================================
+       Phase 2 — Browser fetches the R2 image directly (dashed, no server hop)
+       ================================================================= -->
+  <text x="40" y="470" class="step-title">2. Browser fetches the welcome image directly from R2</text>
+  <text x="40" y="488" class="step-sub">The server never proxies the bytes; the browser uses the presigned URL.</text>
+
+  <!-- Browser → R2 (not PostgreSQL) — use a path that bypasses the lifelines -->
+  <path d="M 120 520 C 400 540, 900 540, 1380 520" class="msg-async"/>
+  <text x="560" y="536" class="msg-label">GET presigned URL (X-Amz-Signature, X-Amz-Expires=900)</text>
+
+  <path d="M 1380 560 C 900 580, 400 580, 120 560" class="msg-return"/>
+  <text x="560" y="576" class="msg-label">image/jpeg bytes</text>
+
+  <!-- =================================================================
+       Phase 3 — Login
+       ================================================================= -->
+  <text x="40" y="630" class="step-title">3. Visitor submits the login form</text>
+  <text x="40" y="648" class="step-sub">POST /web/login with credentials and X-CSRF-Token header.</text>
+
+  <!-- Browser → Gin -->
+  <line x1="120" y1="672" x2="300" y2="672" class="msg"/>
+  <text x="130" y="666" class="msg-label">POST /web/login</text>
+  <text x="130" y="684" class="msg-note">form + X-CSRF-Token header</text>
+
+  <rect x="292" y="672" width="16" height="640" class="activation"/>
+
+  <!-- Gin → middleware annotation (self-call) -->
+  <path d="M 308 690 L 340 690 L 340 706 L 308 706" fill="none" stroke="#9ca3af" stroke-width="1"/>
+  <text x="348" y="702" class="msg-note">CSRF middleware validates the token</text>
+
+  <!-- Gin → AuthHandler -->
+  <line x1="300" y1="740" x2="480" y2="740" class="msg"/>
+  <text x="310" y="734" class="msg-label">Login()</text>
+
+  <rect x="472" y="740" width="16" height="540" class="activation"/>
+
+  <!-- AuthHandler → UserService -->
+  <line x1="480" y1="790" x2="840" y2="790" class="msg"/>
+  <text x="490" y="784" class="msg-label">GetUserByEmail(email)</text>
+
+  <rect x="832" y="790" width="16" height="140" class="activation"/>
+
+  <!-- UserService → PostgreSQL -->
+  <line x1="840" y1="830" x2="1380" y2="830" class="msg"/>
+  <text x="850" y="824" class="msg-label">SELECT id, password_hash, role, is_active FROM users WHERE email = $1</text>
+
+  <line x1="1380" y1="880" x2="840" y2="880" class="msg-return"/>
+  <text x="850" y="874" class="msg-label">row</text>
+
+  <!-- Deactivate UserService -->
+  <!-- (visual only; the activation box spans 790–930) -->
+
+  <!-- UserService → AuthHandler (return) -->
+  <line x1="840" y1="920" x2="480" y2="920" class="msg-return"/>
+  <text x="490" y="914" class="msg-label">*domain.User</text>
+
+  <!-- AuthHandler self-call: CheckPasswordHash -->
+  <path d="M 496 950 L 528 950 L 528 966 L 496 966" fill="none" stroke="#9ca3af" stroke-width="1"/>
+  <text x="536" y="962" class="msg-note">bcrypt.CompareHashAndPassword</text>
+
+  <!-- AuthHandler → JWTService (mint access token) -->
+  <line x1="480" y1="1000" x2="1200" y2="1000" class="msg"/>
+  <text x="490" y="994" class="msg-label">GenerateAccessToken (typ=access, TTL=15m)</text>
+
+  <line x1="1200" y1="1030" x2="480" y2="1030" class="msg-return"/>
+  <text x="490" y="1024" class="msg-label">signed JWT</text>
+
+  <!-- AuthHandler → JWTService (mint refresh token) -->
+  <line x1="480" y1="1060" x2="1200" y2="1060" class="msg"/>
+  <text x="490" y="1054" class="msg-label">GenerateRefreshToken (typ=refresh, TTL=7d, jti)</text>
+
+  <line x1="1200" y1="1090" x2="480" y2="1090" class="msg-return"/>
+  <text x="490" y="1084" class="msg-label">signed JWT + jti</text>
+
+  <!-- AuthHandler → SessionService -->
+  <line x1="480" y1="1120" x2="1020" y2="1120" class="msg"/>
+  <text x="490" y="1114" class="msg-label">Create(jti, userID, expiresAt, userAgent, clientIP)</text>
+
+  <rect x="1012" y="1120" width="16" height="100" class="activation"/>
+
+  <!-- SessionService → PostgreSQL -->
+  <line x1="1020" y1="1150" x2="1380" y2="1150" class="msg"/>
+  <text x="1030" y="1144" class="msg-label">INSERT INTO sessions (jti, user_id, expires_at, …)</text>
+
+  <line x1="1380" y1="1180" x2="1020" y2="1180" class="msg-return"/>
+  <text x="1030" y="1174" class="msg-label">ok</text>
+
+  <!-- AuthHandler self-call: rotate CSRFToken -->
+  <path d="M 496 1210 L 528 1210 L 528 1226 L 496 1226" fill="none" stroke="#9ca3af" stroke-width="1"/>
+  <text x="536" y="1222" class="msg-note">clear + set csrf_token cookie</text>
+
+  <!-- AuthHandler → Browser (response) -->
+  <line x1="480" y1="1270" x2="120" y2="1270" class="msg-return"/>
+  <text x="130" y="1264" class="msg-label">302 Location: /web/home</text>
+  <text x="130" y="1282" class="msg-note">Set-Cookie: auth_token, refresh_token, csrf_token</text>
+
+  <!-- Deactivate AuthHandler -->
+  <!-- Deactivate Gin -->
+
+  <!-- =================================================================
+       Phase 4 — Authenticated admin loads the user list
+       ================================================================= -->
+  <text x="40" y="1330" class="step-title">4. Admin loads the user management page</text>
+  <text x="40" y="1348" class="step-sub">GET /web/users with HX-Request: true; auth cookie validated by AuthMiddleware.</text>
+
+  <!-- Browser → Gin -->
+  <line x1="120" y1="1372" x2="300" y2="1372" class="msg"/>
+  <text x="130" y="1366" class="msg-label">GET /web/users  (HX-Request: true)</text>
+
+  <!-- Gin self-call: AuthMiddleware validates access token; RequireRole checks admin -->
+  <path d="M 316 1384 L 348 1384 L 348 1400 L 316 1400" fill="none" stroke="#9ca3af" stroke-width="1"/>
+  <text x="356" y="1396" class="msg-note">AuthMiddleware: validate access token (no refresh needed)</text>
+
+  <path d="M 316 1412 L 348 1412 L 348 1428 L 316 1428" fill="none" stroke="#9ca3af" stroke-width="1"/>
+  <text x="356" y="1424" class="msg-note">RequireRole("admin"): claims.Role == "admin"</text>
+
+  <!-- Gin → WebHandler -->
+  <line x1="300" y1="1446" x2="660" y2="1446" class="msg"/>
+  <text x="310" y="1440" class="msg-label">ListUsersPage()</text>
+
+  <!-- WebHandler → UserService -->
+  <line x1="660" y1="1470" x2="840" y2="1470" class="msg"/>
+  <text x="670" y="1464" class="msg-label">ListUsers(limit, offset) + CountUsers()</text>
+
+  <!-- WebHandler → Browser -->
+  <line x1="660" y1="1500" x2="120" y2="1500" class="msg-return"/>
+  <text x="130" y="1494" class="msg-label">HTML partial (table rows with actions)</text>
+
+  <!-- =================================================================
+       Legend
+       ================================================================= -->
+  <rect x="1180" y="1440" width="280" height="100" fill="#f9fafb" stroke="#e5e7eb" rx="6"/>
+  <text x="1192" y="1460" class="fragment-lbl">Legend</text>
+
+  <line x1="1192" y1="1480" x2="1252" y2="1480" class="msg"/>
+  <text x="1262" y="1484" class="msg-note">synchronous request</text>
+
+  <line x1="1192" y1="1500" x2="1252" y2="1500" class="msg-return"/>
+  <text x="1262" y="1504" class="msg-note">response</text>
+
+  <line x1="1192" y1="1520" x2="1252" y2="1520" class="msg-async"/>
+  <text x="1262" y="1524" class="msg-note">async / direct browser-to-R2</text>
+</svg>

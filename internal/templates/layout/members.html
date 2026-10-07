@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="htmx-config" content='{"historyEnabled":false}'>
+    <title>{{.title}} - Go HTMX App</title>
+    <link href="/static/css/output.css" rel="stylesheet">
+    <script src="/static/js/htmx.min.js"></script>
+    <style>
+        .htmx-indicator { display: none; }
+        .htmx-request .htmx-indicator { display: inline; }
+        .htmx-request.htmx-indicator { display: inline; }
+        .fade-in { animation: fadeIn 0.3s ease-in; }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(-10px); }
+            to   { opacity: 1; transform: translateY(0); }
+        }
+    </style>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>👥</text></svg>">
+</head>
+<body class="bg-gray-50">
+    <nav class="bg-white shadow-md border-b border-gray-200">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex justify-between items-center h-16">
+                <div class="flex items-center space-x-4">
+                    <a href="/web/home" class="flex items-center space-x-2">
+                        <span class="text-2xl font-bold text-gray-900">Go HTMX App</span>
+                        <span class="text-sm text-gray-500 hidden sm:inline">v1.0</span>
+                    </a>
+                    <div class="hidden md:flex items-center space-x-1 ml-4">
+                        <a href="/web/home"
+                           class="text-gray-700 hover:text-blue-700 hover:bg-blue-50 px-3 py-2 rounded-md text-sm font-medium transition">
+                            Home
+                        </a>
+                        <a href="/web/members"
+                           class="text-blue-700 bg-blue-50 px-3 py-2 rounded-md text-sm font-medium">
+                            Members
+                        </a>
+                        {{if eq .role "admin"}}
+                        <a href="/web/users"
+                           class="text-gray-700 hover:text-blue-700 hover:bg-blue-50 px-3 py-2 rounded-md text-sm font-medium transition">
+                            Manage Users
+                        </a>
+                        {{end}}
+                    </div>
+                </div>
+
+                <div class="flex items-center space-x-3">
+                    <span id="user-count" class="text-sm text-gray-600 hidden sm:inline">Loading stats...</span>
+                    <a href="/web/me"
+                       class="text-gray-700 hover:text-blue-700 hover:bg-blue-50 px-3 py-2 rounded-md text-sm font-medium transition flex items-center gap-1">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                  d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/>
+                        </svg>
+                        <span class="hidden sm:inline">My Account</span>
+                    </a>
+                    <button hx-post="/web/logout"
+                            hx-swap="none"
+                            class="text-red-600 hover:text-red-800 transition px-3 py-2 rounded-md hover:bg-red-50 flex items-center gap-1"
+                            title="Sign out">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                  d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/>
+                        </svg>
+                        <span class="hidden sm:inline">Logout</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <div id="member-list"
+             hx-get="/web/members/partial"
+             hx-trigger="load delay:50ms"
+             hx-target="this"
+             hx-swap="innerHTML"
+             hx-indicator="#members-loader">
+            <div id="members-loader" class="flex justify-center py-12">
+                <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+            </div>
+        </div>
+    </main>
+
+    <div id="toast-container" class="fixed bottom-4 right-4 space-y-2 z-50"></div>
+
+    <script>
+        function readCSRFToken() {
+            const match = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/);
+            return match ? decodeURIComponent(match[1]) : '';
+        }
+        document.body.addEventListener('htmx:configRequest', function (evt) {
+            const token = readCSRFToken();
+            if (token) evt.detail.headers['X-CSRF-Token'] = token;
+        });
+
+        function showToast(message, type = 'success') {
+            const container = document.getElementById('toast-container');
+            if (!container) return;
+            const toast = document.createElement('div');
+            const colors = { success:'bg-green-500', error:'bg-red-500', info:'bg-blue-500', warning:'bg-yellow-500' };
+            const icons  = { success:'✓', error:'✕', info:'ℹ', warning:'⚠' };
+            toast.className = `${colors[type]||colors.info} text-white px-6 py-3 rounded-lg shadow-lg`;
+            toast.innerHTML = `<span class="font-bold mr-2">${icons[type]||''}</span> ${message}`;
+            container.appendChild(toast);
+            setTimeout(() => toast.remove(), 3000);
+        }
+
+        function updateUserCount() {
+            fetch('/web/users/stats', { headers: { 'HX-Request': 'true' } })
+                .then(r => {
+                    if (r.status === 401) { window.location.href = '/web/login'; return null; }
+                    return r.ok ? r.text() : Promise.reject(r.statusText);
+                })
+                .then(html => { if (html === null) return;
+                    const el = document.getElementById('user-count');
+                    if (el) el.innerHTML = html; })
+                .catch(err => console.error('Error updating user count:', err));
+        }
+        document.addEventListener('DOMContentLoaded', () => updateUserCount());
+        document.addEventListener('htmx:afterSwap', (evt) => {
+            if (evt.detail.target && evt.detail.target.id === 'member-list') updateUserCount();
+        });
+
+        async function silentRefresh() {
+            try {
+                const res = await fetch('/web/refresh', {
+                    method: 'POST',
+                    headers: { 'X-Requested-With': 'XMLHttpRequest' },
+                    credentials: 'same-origin',
+                });
+                return res.ok;
+            } catch (err) { return false; }
+        }
+        window.addEventListener('load', () => silentRefresh());
+
+        document.addEventListener('htmx:responseError', (evt) => {
+            const status = evt.detail.xhr?.status || 'unknown';
+            if (status === 401) { window.location.href = '/web/login'; return; }
+            if (status === 403) { showToast('You do not have permission for that action.', 'error'); return; }
+            showToast(`Request failed (${status})`, 'error');
+        });
+        document.addEventListener('htmx:sendError', () => showToast('Network error', 'error'));
+
+        if (window.htmx) htmx.process(document.body);
+    </script>
+</body>
+</html>

@@ -1,0 +1,82 @@
+@startuml
+skinparam style strictuml
+
+' --- CSS Style Block (replaces skinparam ParticipantPadding & BoxPadding) ---
+<style>
+participant {
+    Padding: 10
+}
+box {
+    Padding: 10
+}
+</style>
+
+actor "Client / Browser" as Browser
+box "Go Web Application (Gin)" #F0F0F0
+    participant "Security / CSRF / Auth\nMiddleware" as MW
+    participant "Handlers & Services\n(Web / API)" as Handler
+    participant "R2 Client\n(AWS SDK v2)" as R2Client
+end box
+database "PostgreSQL\n(Users & Sessions)" as DB
+participant "Cloudflare R2\n(Private Storage)" as R2
+
+== 1. Authentication & Token Issuance (Login Flow) ==
+
+Browser -> MW: POST /web/login (Credentials + CSRF Header/Field)
+activate MW
+MW -> DB: Validate credentials & check active user
+activate DB
+DB --> MW: User verified
+deactivate DB
+
+MW -> DB: Insert session row (jti, user_id, user_agent, client_ip)
+MW -> MW: Generate short-lived Access JWT (15m)\n& long-lived Refresh JWT with 'jti' (7d)\nRotate CSRF Token
+MW --> Browser: 200/302 OK\nSet-Cookie: auth_token (HttpOnly, Secure)\nSet-Cookie: refresh_token (HttpOnly, Secure)\nSet-Cookie: csrf_token (Readable)
+deactivate MW
+
+
+== 2. Authorization & Silent Refresh Flow ==
+
+Browser -> MW: GET /web/me (Request protected resource)
+activate MW
+alt Valid Access Token Present
+    MW -> MW: Verify Access JWT (stateless)
+else Access Token Expired, Valid Refresh Token Present
+    MW -> DB: Check SessionService.IsActive(jti)
+    activate DB
+    DB --> MW: Session active & unrevoked
+    deactivate DB
+    MW -> MW: Mint fresh Access JWT
+    MW -> Browser: Set-Cookie: auth_token (New Access Token)
+end
+
+MW -> MW: Enforce RequireRole() check
+MW -> Handler: Pass request context (Claims)
+deactivate MW
+
+== 3. Private Asset Fetching (Presigned URL) ==
+
+activate Handler
+Handler -> R2Client: PresignGetObject(imageKey, 15m)
+activate R2Client
+R2Client -> R2Client: Sign S3 GET Request using R2 Secret
+R2Client --> Handler: Return Presigned R2 URL
+deactivate R2Client
+
+Handler --> Browser: 200 OK (Render HTML with <img src="presigned-url">)
+deactivate Handler
+
+Browser -> R2: GET presigned-url (Direct download, no app auth header)
+activate R2
+R2 --> Browser: 200 OK (Return Image Bytes)
+deactivate R2
+
+== 4. Revocation Flow (Logout / Role Change) ==
+
+Browser -> MW: POST /web/logout (or Admin updates role)
+activate MW
+MW -> DB: Revoke session(s) in 'sessions' table (set revoked_at)
+MW --> Browser: Clear auth_token, refresh_token, & csrf_token cookies
+deactivate MW
+
+@enduml

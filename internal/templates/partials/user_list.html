@@ -1,0 +1,130 @@
+<div class="fade-in">
+    <!-- Header with Stats -->
+    <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
+        <div>
+            <h2 class="text-2xl font-bold text-gray-900">Users</h2>
+            <p class="text-sm text-gray-600 mt-1">{{.total}} total users</p>
+        </div>
+        <div class="flex flex-wrap gap-3">
+            <!-- Search -->
+            <form class="flex gap-2"
+                  hx-get="/web/users"
+                  hx-target="#user-list"
+                  hx-swap="innerHTML"
+                  hx-trigger="submit">
+                <input type="text"
+                       name="search"
+                       value="{{.search}}"
+                       placeholder="Search users..."
+                       class="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                <button type="submit" class="bg-gray-600 text-white px-4 py-2 rounded-lg hover:bg-gray-700 transition">
+                    Search
+                </button>
+                {{if .search}}
+                <a href="/web/users"
+                   hx-get="/web/users"
+                   hx-target="#user-list"
+                   hx-swap="innerHTML"
+                   class="bg-gray-200 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-300 transition">
+                    Clear
+                </a>
+                {{end}}
+            </form>
+
+            <!-- Add User -->
+            <button class="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition flex items-center gap-2"
+                    hx-get="/web/users/new"
+                    hx-target="#user-form-container"
+                    hx-swap="innerHTML">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+                </svg>
+                Add User
+            </button>
+        </div>
+    </div>
+
+    <!-- Form Container -->
+    <div id="user-form-container" class="mb-6"></div>
+
+    <!-- Table -->
+    <div class="bg-white rounded-lg shadow overflow-hidden">
+        <div class="overflow-x-auto">
+            <table class="min-w-full divide-y divide-gray-200">
+                <thead class="bg-gray-50">
+                    <tr>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">ID</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Username</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Full Name</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Email</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Role</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="user-tbody" class="bg-white divide-y divide-gray-200">
+                    {{range .users}}
+                        {{template "user_row.html" .}}
+                    {{else}}
+                        <tr>
+                            <td colspan="7" class="px-6 py-12 text-center text-gray-500">
+                                <p class="mt-2">No users found</p>
+                            </td>
+                        </tr>
+                    {{end}}
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Pagination -->
+        {{if gt .totalPages 1}}
+        <div class="bg-white px-4 py-3 border-t border-gray-200 sm:px-6">
+            <div class="flex items-center justify-between">
+                <div class="hidden sm:flex-1 sm:flex sm:items-center sm:justify-between">
+                    <div>
+                        <p class="text-sm text-gray-700">
+                            Page <span class="font-medium">{{.page}}</span> of <span class="font-medium">{{.totalPages}}</span>
+                            ({{.total}} total)
+                        </p>
+                    </div>
+                    <div>
+                        <nav class="relative z-0 inline-flex rounded-md shadow-sm -space-x-px">
+                            {{if gt .page 1}}
+                            <a href="/web/users?page={{sub .page 1}}&limit={{.limit}}{{if .search}}&search={{.search}}{{end}}"
+                               hx-get="/web/users?page={{sub .page 1}}&limit={{.limit}}{{if .search}}&search={{.search}}{{end}}"
+                               hx-target="#user-list"
+                               hx-swap="innerHTML"
+                               class="relative inline-flex items-center px-2 py-2 rounded-l-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50">
+                                Previous
+                            </a>
+                            {{end}}
+
+                            {{range $i := seq (sub .page 2) (add .page 2)}}
+                                {{if and (gt $i 0) (le $i $.totalPages)}}
+                                <a href="/web/users?page={{$i}}&limit={{$.limit}}{{if $.search}}&search={{$.search}}{{end}}"
+                                   hx-get="/web/users?page={{$i}}&limit={{$.limit}}{{if $.search}}&search={{$.search}}{{end}}"
+                                   hx-target="#user-list"
+                                   hx-swap="innerHTML"
+                                   class="relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium {{if eq $i $.page}}text-blue-600 bg-blue-50{{else}}text-gray-700 bg-white hover:bg-gray-50{{end}}">
+                                    {{$i}}
+                                </a>
+                                {{end}}
+                            {{end}}
+
+                            {{if lt .page .totalPages}}
+                            <a href="/web/users?page={{add .page 1}}&limit={{.limit}}{{if .search}}&search={{.search}}{{end}}"
+                               hx-get="/web/users?page={{add .page 1}}&limit={{.limit}}{{if .search}}&search={{.search}}{{end}}"
+                               hx-target="#user-list"
+                               hx-swap="innerHTML"
+                               class="relative inline-flex items-center px-2 py-2 rounded-r-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50">
+                                Next
+                            </a>
+                            {{end}}
+                        </nav>
+                    </div>
+                </div>
+            </div>
+        </div>
+        {{end}}
+    </div>
+</div>

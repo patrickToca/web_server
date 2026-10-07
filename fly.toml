@@ -1,0 +1,85 @@
+# fly.toml — configuration for a Fly.io deployment.
+#
+# The secrets file (secrets/secrets.enc.yaml) is committed and is
+# bundled into the image. The age private key is NOT in the image; it
+# arrives as a Fly Secret named AGE_KEY, set with:
+#
+#     fly secrets set AGE_KEY="$(cat ~/.config/sops/age/keys.txt)"
+#
+# On boot, internal/credentials reads AGE_KEY, sets SOPS_AGE_KEY from
+# it, and decrypts secrets/secrets.enc.yaml.
+
+app = "mywebapp"
+primary_region = "lhr"   # London. Change to the region nearest you.
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  # Explicit path to the encrypted secrets file. The image ships the
+  # file at this path; the resolver in internal/credentials reads this
+  # variable first and skips the go.mod walk, which would fail because
+  # the image does not include the source.
+  SOPS_PATH = "/app/secrets/secrets.enc.yaml"
+
+  # Non-secret configuration. These are visible in the Fly dashboard,
+  # which is correct: they are not secrets. Secrets are in Fly Secrets
+  # (AGE_KEY only) and in secrets/secrets.enc.yaml (everything else).
+  APP_ENV = "production"
+  PORT = "8080"
+  LOG_FORMAT = "json"
+  LOG_LEVEL = "info"
+  GIN_MODE = "release"
+
+  # Production security posture.
+  COOKIE_SECURE = "true"
+  COOKIE_SAMESITE = "lax"
+  CSP_REPORT_ONLY = "false"
+  HSTS_MAX_AGE = "31536000"
+  HSTS_INCLUDE_SUBDOMAINS = "true"
+  HSTS_PRELOAD = "false"
+
+  # Database coordinates. The password is in secrets/secrets.enc.yaml.
+  DB_HOST = "mywebapp-db.internal"
+  DB_PORT = "5432"
+  DB_USER = "mywebapp"
+  DB_NAME = "mywebapp"
+  DB_SSLMODE = "require"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+
+  # min_machines_running = 0 keeps the cost near zero but pays a
+  # 2-5 second cold start on the first request after idle. Raise it
+  # to 1 to keep one machine warm; the cost is roughly $2-3/month.
+  min_machines_running = 0
+
+  [http_service.concurrency]
+    type = "requests"
+    hard_limit = 250
+    soft_limit = 200
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
+
+# No [processes] block. The cleanup loop runs inside the app process
+# as a goroutine (see sessionCleanupLoop in cmd/api/main.go). Splitting
+# it into a separate process would mean either exposing an admin
+# endpoint for the cleanup container to call, or shipping a second
+# binary; neither is worth it for a loop that runs once an hour.
+
+# Mount a Fly Volume for Postgres if you are running it yourself. If
+# you are using Fly's managed Postgres, delete this block and update
+# DB_HOST in [env] to point at the managed instance.
+#
+# [[mounts]]
+#   source = "mywebapp_data"
+#   destination = "/data"
+
+[[statics]]
+  guest_path = "/app/static"
+  url_prefix = "/static"

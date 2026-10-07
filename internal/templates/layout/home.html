@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="htmx-config" content='{"historyEnabled":false}'>
+    <title>{{.title}} - Go HTMX App</title>
+    <link href="/static/css/output.css" rel="stylesheet">
+    <script src="/static/js/htmx.min.js"></script>
+    <style>
+        .htmx-indicator { display: none; }
+        .htmx-request .htmx-indicator { display: inline; }
+        .htmx-request.htmx-indicator { display: inline; }
+        .fade-in { animation: fadeIn 0.3s ease-in; }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(-10px); }
+            to   { opacity: 1; transform: translateY(0); }
+        }
+    </style>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏠</text></svg>">
+</head>
+<body class="bg-gray-50">
+    <nav class="bg-white shadow-md border-b border-gray-200">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex justify-between items-center h-16">
+                <div class="flex items-center space-x-4">
+                    <a href="/web/home" class="flex items-center space-x-2">
+                        <span class="text-2xl font-bold text-gray-900">Go HTMX App</span>
+                        <span class="text-sm text-gray-500 hidden sm:inline">v1.0</span>
+                    </a>
+                    <div class="hidden md:flex items-center space-x-1 ml-4">
+                        <a href="/web/home"
+                           class="text-blue-700 bg-blue-50 px-3 py-2 rounded-md text-sm font-medium">
+                            Home
+                        </a>
+                        {{if .authed}}
+                        {{if or (eq .role "moderator") (eq .role "admin")}}
+                        <a href="/web/members"
+                           class="text-gray-700 hover:text-blue-700 hover:bg-blue-50 px-3 py-2 rounded-md text-sm font-medium transition">
+                            Members
+                        </a>
+                        {{end}}
+                        {{if eq .role "admin"}}
+                        <a href="/web/users"
+                           class="text-gray-700 hover:text-blue-700 hover:bg-blue-50 px-3 py-2 rounded-md text-sm font-medium transition">
+                            Manage Users
+                        </a>
+                        {{end}}
+                        {{end}}
+                    </div>
+                </div>
+
+                <div class="flex items-center space-x-3">
+                    {{if .authed}}
+                        <span id="user-count" class="text-sm text-gray-600 hidden sm:inline">Loading stats...</span>
+                        <a href="/web/me"
+                           class="text-gray-700 hover:text-blue-700 hover:bg-blue-50 px-3 py-2 rounded-md text-sm font-medium transition flex items-center gap-1">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                      d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/>
+                            </svg>
+                            <span class="hidden sm:inline">My Account</span>
+                        </a>
+                        <button hx-post="/web/logout"
+                                hx-swap="none"
+                                class="text-red-600 hover:text-red-800 transition px-3 py-2 rounded-md hover:bg-red-50 flex items-center gap-1"
+                                title="Sign out">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                      d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/>
+                            </svg>
+                            <span class="hidden sm:inline">Logout</span>
+                        </button>
+                    {{else}}
+                        <a href="/web/login"
+                           class="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition flex items-center gap-2 text-sm font-medium">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                      d="M11 16l-4-4m0 0l4-4m-4 4h14m-5 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h7a3 3 0 013 3v1"/>
+                            </svg>
+                            Sign in
+                        </a>
+                    {{end}}
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <main class="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
+        <div class="fade-in">
+            <!-- Hero -->
+            <div class="bg-gradient-to-r from-blue-600 to-blue-700 rounded-lg shadow-lg overflow-hidden mb-8">
+                {{if .imageURL}}
+                    <img src="{{.imageURL}}" alt="Welcome" class="w-full h-48 object-cover">
+                {{end}}
+                <div class="p-8 text-white">
+                    {{if .authed}}
+                        <h1 class="text-3xl font-bold mb-2">
+                            Welcome back, {{if .fullName}}{{.fullName}}{{else}}{{.username}}{{end}}
+                        </h1>
+                        <p class="text-blue-100">
+                            Signed in as <span class="font-medium">{{.username}}</span>
+                            <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full
+                                         {{if eq .role "admin"}}bg-purple-200 text-purple-900
+                                         {{else if eq .role "moderator"}}bg-yellow-200 text-yellow-900
+                                         {{else}}bg-white/20 text-white{{end}}">
+                                {{.role}}
+                            </span>
+                        </p>
+                    {{else}}
+                        <h1 class="text-3xl font-bold mb-2">Welcome to Go HTMX App</h1>
+                        <p class="text-blue-100">
+                            A small web application built with Go, Gin, HTMX and Tailwind CSS.
+                            Sign in to access the member directory and your account.
+                        </p>
+                    {{end}}
+                </div>
+            </div>
+
+            <!-- Quick links -->
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+                {{if .authed}}
+                {{if or (eq .role "moderator") (eq .role "admin")}}
+                <a href="/web/members"
+                   class="block bg-white rounded-lg shadow hover:shadow-md transition p-6 border border-gray-100">
+                    <div class="flex items-center gap-3 mb-2">
+                        <div class="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center">
+                            <svg class="w-5 h-5 text-blue-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                      d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"/>
+                            </svg>
+                        </div>
+                        <h3 class="font-semibold text-gray-900">Members</h3>
+                    </div>
+                    <p class="text-sm text-gray-600">Browse the registered members of the application.</p>
+                </a>
+                {{end}}
+                {{end}}
+
+                <a href="/web/me"
+                   class="block bg-white rounded-lg shadow hover:shadow-md transition p-6 border border-gray-100">
+                    <div class="flex items-center gap-3 mb-2">
+                        <div class="w-10 h-10 rounded-full bg-green-100 flex items-center justify-center">
+                            <svg class="w-5 h-5 text-green-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                      d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/>
+                            </svg>
+                        </div>
+                        <h3 class="font-semibold text-gray-900">My Account</h3>
+                    </div>
+                    <p class="text-sm text-gray-600">
+                        View your own account details.
+                        {{if not .authed}}<span class="text-blue-700 font-medium">Sign in required.</span>{{end}}
+                    </p>
+                </a>
+
+                {{if and .authed (eq .role "admin")}}
+                <a href="/web/users"
+                   class="block bg-white rounded-lg shadow hover:shadow-md transition p-6 border border-gray-100">
+                    <div class="flex items-center gap-3 mb-2">
+                        <div class="w-10 h-10 rounded-full bg-purple-100 flex items-center justify-center">
+                            <svg class="w-5 h-5 text-purple-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                      d="M12 4v16m8-8H4"/>
+                            </svg>
+                        </div>
+                        <h3 class="font-semibold text-gray-900">Manage Users</h3>
+                    </div>
+                    <p class="text-sm text-gray-600">Create, edit, and manage user accounts (admin only).</p>
+                </a>
+                {{end}}
+            </div>
+
+            <!-- General information -->
+            <div class="bg-white rounded-lg shadow overflow-hidden">
+                <div class="px-6 py-4 border-b border-gray-200 bg-gray-50">
+                    <h2 class="text-lg font-semibold text-gray-900">General Information</h2>
+                </div>
+                <div class="px-6 py-5 space-y-4 text-sm text-gray-700">
+                    <p>
+                        This application is built with <strong>Go</strong>, <strong>Gin</strong>,
+                        <strong>HTMX</strong>, and <strong>Tailwind CSS</strong>. It uses JWT-based
+                        authentication with short-lived access tokens and rotating refresh tokens
+                        stored in HttpOnly cookies.
+                    </p>
+                    <p>
+                        This page is public — no account is needed to read it. Signing in unlocks
+                        your own account page; the member directory is available to moderators and
+                        administrators.
+                    </p>
+
+                    {{if .authed}}
+                    <dl class="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-2">
+                        <div class="bg-gray-50 rounded-lg p-3">
+                            <dt class="text-xs uppercase tracking-wide text-gray-500">Total members</dt>
+                            <dd id="home-stat-total" class="text-xl font-bold text-gray-900">—</dd>
+                        </div>
+                        <div class="bg-gray-50 rounded-lg p-3">
+                            <dt class="text-xs uppercase tracking-wide text-gray-500">Active</dt>
+                            <dd id="home-stat-active" class="text-xl font-bold text-green-700">—</dd>
+                        </div>
+                        <div class="bg-gray-50 rounded-lg p-3">
+                            <dt class="text-xs uppercase tracking-wide text-gray-500">Inactive</dt>
+                            <dd id="home-stat-inactive" class="text-xl font-bold text-red-700">—</dd>
+                        </div>
+                    </dl>
+                    {{end}}
+                </div>
+            </div>
+
+            {{if not .authed}}
+            <div class="mt-8 bg-blue-50 border border-blue-200 rounded-lg p-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                <div>
+                    <h3 class="text-lg font-semibold text-blue-900">Have an account?</h3>
+                    <p class="text-sm text-blue-800 mt-1">Sign in to access your profile.</p>
+                </div>
+                <div class="flex gap-3">
+                    <a href="/web/login"
+                       class="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition text-sm font-medium">
+                        Sign in
+                    </a>
+                    <a href="/web/register"
+                       class="bg-white border border-blue-300 text-blue-700 px-4 py-2 rounded-lg hover:bg-blue-100 transition text-sm font-medium">
+                        Register
+                    </a>
+                </div>
+            </div>
+            {{end}}
+        </div>
+    </main>
+
+    <div id="toast-container" class="fixed bottom-4 right-4 space-y-2 z-50"></div>
+
+    <script>
+        function readCSRFToken() {
+            const match = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/);
+            return match ? decodeURIComponent(match[1]) : '';
+        }
+        document.body.addEventListener('htmx:configRequest', function (evt) {
+            const token = readCSRFToken();
+            if (token) evt.detail.headers['X-CSRF-Token'] = token;
+        });
+
+        function showToast(message, type = 'success') {
+            const container = document.getElementById('toast-container');
+            if (!container) return;
+            const toast = document.createElement('div');
+            const colors = { success:'bg-green-500', error:'bg-red-500', info:'bg-blue-500', warning:'bg-yellow-500' };
+            const icons  = { success:'✓', error:'✕', info:'ℹ', warning:'⚠' };
+            toast.className = `${colors[type]||colors.info} text-white px-6 py-3 rounded-lg shadow-lg`;
+            toast.innerHTML = `<span class="font-bold mr-2">${icons[type]||''}</span> ${message}`;
+            container.appendChild(toast);
+            setTimeout(() => toast.remove(), 3000);
+        }
+
+        const IS_AUTHED = {{if .authed}}true{{else}}false{{end}};
+
+        function updateUserCount() {
+            if (!IS_AUTHED) return;
+            fetch('/web/users/stats', { headers: { 'HX-Request': 'true' } })
+                .then(r => {
+                    if (r.status === 401) { return null; }
+                    return r.ok ? r.text() : Promise.reject(r.statusText);
+                })
+                .then(html => {
+                    if (html === null) return;
+                    const el = document.getElementById('user-count');
+                    if (el) el.innerHTML = html;
+                    const tmp = document.createElement('div');
+                    tmp.innerHTML = html;
+                    const nums = tmp.textContent.match(/\d+/g) || [];
+                    const set = (id, v) => { const e = document.getElementById(id); if (e) e.textContent = v; };
+                    if (nums.length >= 3) {
+                        set('home-stat-total', nums[0]);
+                        set('home-stat-active', nums[1]);
+                        set('home-stat-inactive', nums[2]);
+                    }
+                })
+                .catch(err => console.error('Error updating user count:', err));
+        }
+
+        document.addEventListener('DOMContentLoaded', () => updateUserCount());
+
+        document.addEventListener('htmx:responseError', (evt) => {
+            const status = evt.detail.xhr?.status || 'unknown';
+            if (status === 401) { window.location.href = '/web/login'; return; }
+            if (status === 403) { showToast('Session expired or request blocked.', 'error'); return; }
+            showToast(`Request failed (${status})`, 'error');
+        });
+        document.addEventListener('htmx:sendError', () => showToast('Network error', 'error'));
+
+        if (window.htmx) htmx.process(document.body);
+    </script>
+</body>
+</html>

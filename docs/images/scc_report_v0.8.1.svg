@@ -1,0 +1,289 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg"
+     viewBox="0 0 900 620"
+     width="900" height="620"
+     font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif"
+     font-size="12">
+
+  <defs>
+    <style>
+      .header-cell   { font-size: 12px; font-weight: 700; fill: #ffffff; }
+      .lang-cell     { font-size: 12px; font-weight: 600; fill: #1f2937; }
+      .num-cell      { font-size: 12px; fill: #374151; }
+      .total-cell    { font-size: 12px; font-weight: 700; fill: #111827; }
+      .footer-line   { font-size: 12px; fill: #111827; }
+      .footer-value  { font-size: 12px; font-weight: 700; fill: #1e3a8a; }
+
+      .table-border  { fill: none; stroke: #cbd5e1; stroke-width: 1; }
+
+      .row-lang-1    { fill: #ffffff; }
+      .row-lang-2    { fill: #f8fafc; }
+      .row-total     { fill: #dbeafe; }
+
+      .col-header-bg { fill: #1e3a8a; }
+      .col-header-sep{ stroke: #3b82f6; stroke-width: 1; }
+
+      .cell-sep      { stroke: #e2e8f0; stroke-width: 1; }
+
+      /* Language accent bars */
+      .accent-go     { fill: #00add8; }
+      .accent-html   { fill: #e34c26; }
+      .accent-shell  { fill: #89e051; }
+      .accent-sql    { fill: #336791; }
+      .accent-adoc   { fill: #e40046; }
+      .accent-css    { fill: #264de4; }
+      .accent-js     { fill: #f7df1e; }
+      .accent-svg    { fill: #ffb13b; }
+      .accent-yaml   { fill: #cb171e; }
+      .accent-json   { fill: #8b8b8b; }
+      .accent-make   { fill: #6d8086; }
+      .accent-toml   { fill: #9c4221; }
+    </style>
+  </defs>
+
+  <rect x="0" y="0" width="900" height="620" fill="#ffffff"/>
+
+  <!-- Title -->
+  <text x="30" y="34" font-size="18" font-weight="700" fill="#111827">Source code statistics</text>
+  <text x="30" y="54" font-size="12" fill="#6b7280">Generated with scc — excluding node_modules and bin</text>
+
+  <!-- ============================================================
+       Header row
+       ============================================================ -->
+  <rect x="30" y="80" width="840" height="30" class="col-header-bg"/>
+
+  <!-- Column headers -->
+  <text x="40"  y="100" class="header-cell">Language</text>
+  <text x="180" y="100" class="header-cell" text-anchor="end">Files</text>
+  <text x="250" y="100" class="header-cell" text-anchor="end">Lines</text>
+  <text x="320" y="100" class="header-cell" text-anchor="end">Blank</text>
+  <text x="400" y="100" class="header-cell" text-anchor="end">Comment</text>
+  <text x="470" y="100" class="header-cell" text-anchor="end">Code</text>
+  <text x="560" y="100" class="header-cell" text-anchor="end">Complexity</text>
+  <text x="650" y="100" class="header-cell" text-anchor="end">Bytes</text>
+  <text x="720" y="100" class="header-cell" text-anchor="end">Uloc</text>
+
+  <!-- Vertical separators in header -->
+  <line x1="160" y1="80" x2="160" y2="110" class="col-header-sep"/>
+  <line x1="230" y1="80" x2="230" y2="110" class="col-header-sep"/>
+  <line x1="300" y1="80" x2="300" y2="110" class="col-header-sep"/>
+  <line x1="375" y1="80" x2="375" y2="110" class="col-header-sep"/>
+  <line x1="445" y1="80" x2="445" y2="110" class="col-header-sep"/>
+  <line x1="530" y1="80" x2="530" y2="110" class="col-header-sep"/>
+  <line x1="620" y1="80" x2="620" y2="110" class="col-header-sep"/>
+  <line x1="690" y1="80" x2="690" y2="110" class="col-header-sep"/>
+
+  <!-- ============================================================
+       Data rows
+       ============================================================ -->
+  <!-- Row height: 28 px. Starting y of first row: 110. -->
+
+  <!-- Go -->
+  <rect x="30" y="110" width="840" height="28" class="row-lang-1"/>
+  <rect x="30" y="110" width="4"   height="28" class="accent-go"/>
+  <text x="44"  y="129" class="lang-cell">Go</text>
+  <text x="180" y="129" class="num-cell" text-anchor="end">65</text>
+  <text x="250" y="129" class="num-cell" text-anchor="end">10529</text>
+  <text x="320" y="129" class="num-cell" text-anchor="end">1399</text>
+  <text x="400" y="129" class="num-cell" text-anchor="end">1056</text>
+  <text x="470" y="129" class="num-cell" text-anchor="end">8074</text>
+  <text x="560" y="129" class="num-cell" text-anchor="end">1484</text>
+  <text x="650" y="129" class="num-cell" text-anchor="end">294643</text>
+  <text x="720" y="129" class="num-cell" text-anchor="end">0</text>
+
+  <!-- HTML -->
+  <rect x="30" y="138" width="840" height="28" class="row-lang-2"/>
+  <rect x="30" y="138" width="4"   height="28" class="accent-html"/>
+  <text x="44"  y="157" class="lang-cell">HTML</text>
+  <text x="180" y="157" class="num-cell" text-anchor="end">17</text>
+  <text x="250" y="157" class="num-cell" text-anchor="end">1967</text>
+  <text x="320" y="157" class="num-cell" text-anchor="end">131</text>
+  <text x="400" y="157" class="num-cell" text-anchor="end">62</text>
+  <text x="470" y="157" class="num-cell" text-anchor="end">1774</text>
+  <text x="560" y="157" class="num-cell" text-anchor="end">0</text>
+  <text x="650" y="157" class="num-cell" text-anchor="end">98456</text>
+  <text x="720" y="157" class="num-cell" text-anchor="end">0</text>
+
+  <!-- Shell -->
+  <rect x="30" y="166" width="840" height="28" class="row-lang-1"/>
+  <rect x="30" y="166" width="4"   height="28" class="accent-shell"/>
+  <text x="44"  y="185" class="lang-cell">Shell</text>
+  <text x="180" y="185" class="num-cell" text-anchor="end">9</text>
+  <text x="250" y="185" class="num-cell" text-anchor="end">717</text>
+  <text x="320" y="185" class="num-cell" text-anchor="end">96</text>
+  <text x="400" y="185" class="num-cell" text-anchor="end">103</text>
+  <text x="470" y="185" class="num-cell" text-anchor="end">518</text>
+  <text x="560" y="185" class="num-cell" text-anchor="end">35</text>
+  <text x="650" y="185" class="num-cell" text-anchor="end">23756</text>
+  <text x="720" y="185" class="num-cell" text-anchor="end">0</text>
+
+  <!-- SQL -->
+  <rect x="30" y="194" width="840" height="28" class="row-lang-2"/>
+  <rect x="30" y="194" width="4"   height="28" class="accent-sql"/>
+  <text x="44"  y="213" class="lang-cell">SQL</text>
+  <text x="180" y="213" class="num-cell" text-anchor="end">6</text>
+  <text x="250" y="213" class="num-cell" text-anchor="end">190</text>
+  <text x="320" y="213" class="num-cell" text-anchor="end">28</text>
+  <text x="400" y="213" class="num-cell" text-anchor="end">26</text>
+  <text x="470" y="213" class="num-cell" text-anchor="end">136</text>
+  <text x="560" y="213" class="num-cell" text-anchor="end">6</text>
+  <text x="650" y="213" class="num-cell" text-anchor="end">6026</text>
+  <text x="720" y="213" class="num-cell" text-anchor="end">0</text>
+
+  <!-- AsciiDoc -->
+  <rect x="30" y="222" width="840" height="28" class="row-lang-1"/>
+  <rect x="30" y="222" width="4"   height="28" class="accent-adoc"/>
+  <text x="44"  y="241" class="lang-cell">AsciiDoc</text>
+  <text x="180" y="241" class="num-cell" text-anchor="end">3</text>
+  <text x="250" y="241" class="num-cell" text-anchor="end">4436</text>
+  <text x="320" y="241" class="num-cell" text-anchor="end">951</text>
+  <text x="400" y="241" class="num-cell" text-anchor="end">0</text>
+  <text x="470" y="241" class="num-cell" text-anchor="end">3485</text>
+  <text x="560" y="241" class="num-cell" text-anchor="end">0</text>
+  <text x="650" y="241" class="num-cell" text-anchor="end">142741</text>
+  <text x="720" y="241" class="num-cell" text-anchor="end">0</text>
+
+  <!-- CSS -->
+  <rect x="30" y="250" width="840" height="28" class="row-lang-2"/>
+  <rect x="30" y="250" width="4"   height="28" class="accent-css"/>
+  <text x="44"  y="269" class="lang-cell">CSS</text>
+  <text x="180" y="269" class="num-cell" text-anchor="end">2</text>
+  <text x="250" y="269" class="num-cell" text-anchor="end">52</text>
+  <text x="320" y="269" class="num-cell" text-anchor="end">1</text>
+  <text x="400" y="269" class="num-cell" text-anchor="end">0</text>
+  <text x="470" y="269" class="num-cell" text-anchor="end">51</text>
+  <text x="560" y="269" class="num-cell" text-anchor="end">0</text>
+  <text x="650" y="269" class="num-cell" text-anchor="end">28945</text>
+  <text x="720" y="269" class="num-cell" text-anchor="end">0</text>
+
+  <!-- JavaScript -->
+  <rect x="30" y="278" width="840" height="28" class="row-lang-1"/>
+  <rect x="30" y="278" width="4"   height="28" class="accent-js"/>
+  <text x="44"  y="297" class="lang-cell">JavaScript</text>
+  <text x="180" y="297" class="num-cell" text-anchor="end">2</text>
+  <text x="250" y="297" class="num-cell" text-anchor="end">27</text>
+  <text x="320" y="297" class="num-cell" text-anchor="end">0</text>
+  <text x="400" y="297" class="num-cell" text-anchor="end">1</text>
+  <text x="470" y="297" class="num-cell" text-anchor="end">26</text>
+  <text x="560" y="297" class="num-cell" text-anchor="end">539</text>
+  <text x="650" y="297" class="num-cell" text-anchor="end">48325</text>
+  <text x="720" y="297" class="num-cell" text-anchor="end">0</text>
+
+  <!-- SVG -->
+  <rect x="30" y="306" width="840" height="28" class="row-lang-2"/>
+  <rect x="30" y="306" width="4"   height="28" class="accent-svg"/>
+  <text x="44"  y="325" class="lang-cell">SVG</text>
+  <text x="180" y="325" class="num-cell" text-anchor="end">2</text>
+  <text x="250" y="325" class="num-cell" text-anchor="end">582</text>
+  <text x="320" y="325" class="num-cell" text-anchor="end">125</text>
+  <text x="400" y="325" class="num-cell" text-anchor="end">123</text>
+  <text x="470" y="325" class="num-cell" text-anchor="end">334</text>
+  <text x="560" y="325" class="num-cell" text-anchor="end">2</text>
+  <text x="650" y="325" class="num-cell" text-anchor="end">29657</text>
+  <text x="720" y="325" class="num-cell" text-anchor="end">0</text>
+
+  <!-- YAML -->
+  <rect x="30" y="334" width="840" height="28" class="row-lang-1"/>
+  <rect x="30" y="334" width="4"   height="28" class="accent-yaml"/>
+  <text x="44"  y="353" class="lang-cell">YAML</text>
+  <text x="180" y="353" class="num-cell" text-anchor="end">2</text>
+  <text x="250" y="353" class="num-cell" text-anchor="end">39</text>
+  <text x="320" y="353" class="num-cell" text-anchor="end">2</text>
+  <text x="400" y="353" class="num-cell" text-anchor="end">1</text>
+  <text x="470" y="353" class="num-cell" text-anchor="end">36</text>
+  <text x="560" y="353" class="num-cell" text-anchor="end">0</text>
+  <text x="650" y="353" class="num-cell" text-anchor="end">685</text>
+  <text x="720" y="353" class="num-cell" text-anchor="end">0</text>
+
+  <!-- JSON -->
+  <rect x="30" y="362" width="840" height="28" class="row-lang-2"/>
+  <rect x="30" y="362" width="4"   height="28" class="accent-json"/>
+  <text x="44"  y="381" class="lang-cell">JSON</text>
+  <text x="180" y="381" class="num-cell" text-anchor="end">1</text>
+  <text x="250" y="381" class="num-cell" text-anchor="end">15</text>
+  <text x="320" y="381" class="num-cell" text-anchor="end">0</text>
+  <text x="400" y="381" class="num-cell" text-anchor="end">0</text>
+  <text x="470" y="381" class="num-cell" text-anchor="end">15</text>
+  <text x="560" y="381" class="num-cell" text-anchor="end">0</text>
+  <text x="650" y="381" class="num-cell" text-anchor="end">520</text>
+  <text x="720" y="381" class="num-cell" text-anchor="end">0</text>
+
+  <!-- Makefile -->
+  <rect x="30" y="390" width="840" height="28" class="row-lang-1"/>
+  <rect x="30" y="390" width="4"   height="28" class="accent-make"/>
+  <text x="44"  y="409" class="lang-cell">Makefile</text>
+  <text x="180" y="409" class="num-cell" text-anchor="end">1</text>
+  <text x="250" y="409" class="num-cell" text-anchor="end">529</text>
+  <text x="320" y="409" class="num-cell" text-anchor="end">70</text>
+  <text x="400" y="409" class="num-cell" text-anchor="end">56</text>
+  <text x="470" y="409" class="num-cell" text-anchor="end">403</text>
+  <text x="560" y="409" class="num-cell" text-anchor="end">46</text>
+  <text x="650" y="409" class="num-cell" text-anchor="end">19896</text>
+  <text x="720" y="409" class="num-cell" text-anchor="end">0</text>
+
+  <!-- TOML -->
+  <rect x="30" y="418" width="840" height="28" class="row-lang-2"/>
+  <rect x="30" y="418" width="4"   height="28" class="accent-toml"/>
+  <text x="44"  y="437" class="lang-cell">TOML</text>
+  <text x="180" y="437" class="num-cell" text-anchor="end">1</text>
+  <text x="250" y="437" class="num-cell" text-anchor="end">38</text>
+  <text x="320" y="437" class="num-cell" text-anchor="end">4</text>
+  <text x="400" y="437" class="num-cell" text-anchor="end">1</text>
+  <text x="470" y="437" class="num-cell" text-anchor="end">33</text>
+  <text x="560" y="437" class="num-cell" text-anchor="end">0</text>
+  <text x="650" y="437" class="num-cell" text-anchor="end">726</text>
+  <text x="720" y="437" class="num-cell" text-anchor="end">0</text>
+
+  <!-- ============================================================
+       Total row
+       ============================================================ -->
+  <rect x="30" y="446" width="840" height="30" class="row-total"/>
+  <text x="44"  y="466" class="total-cell">Total</text>
+  <text x="180" y="466" class="total-cell" text-anchor="end">111</text>
+  <text x="250" y="466" class="total-cell" text-anchor="end">19121</text>
+  <text x="320" y="466" class="total-cell" text-anchor="end">2807</text>
+  <text x="400" y="466" class="total-cell" text-anchor="end">1429</text>
+  <text x="470" y="466" class="total-cell" text-anchor="end">14885</text>
+  <text x="560" y="466" class="total-cell" text-anchor="end">2112</text>
+  <text x="650" y="466" class="total-cell" text-anchor="end">694376</text>
+  <text x="720" y="466" class="total-cell" text-anchor="end">0</text>
+
+  <!-- ============================================================
+       Grid lines (light separators between rows and columns)
+       ============================================================ -->
+  <g class="cell-sep">
+    <!-- Horizontal separators -->
+    <line x1="30" y1="138" x2="870" y2="138"/>
+    <line x1="30" y1="166" x2="870" y2="166"/>
+    <line x1="30" y1="194" x2="870" y2="194"/>
+    <line x1="30" y1="222" x2="870" y2="222"/>
+    <line x1="30" y1="250" x2="870" y2="250"/>
+    <line x1="30" y1="278" x2="870" y2="278"/>
+    <line x1="30" y1="306" x2="870" y2="306"/>
+    <line x1="30" y1="334" x2="870" y2="334"/>
+    <line x1="30" y1="362" x2="870" y2="362"/>
+    <line x1="30" y1="390" x2="870" y2="390"/>
+    <line x1="30" y1="418" x2="870" y2="418"/>
+    <line x1="30" y1="446" x2="870" y2="446"/>
+  </g>
+
+  <!-- Table outer border -->
+  <rect x="30" y="80" width="840" height="396" class="table-border"/>
+
+  <!-- ============================================================
+       Footer
+       ============================================================ -->
+  <text x="30" y="500" class="footer-line">
+    Estimated Cost to Develop (organic): <tspan class="footer-value">$460,286</tspan>
+  </text>
+  <text x="30" y="520" class="footer-line">
+    Estimated Schedule Effort (organic): <tspan class="footer-value">10.24 months</tspan>
+  </text>
+  <text x="30" y="540" class="footer-line">
+    Estimated People Required (organic): <tspan class="footer-value">3.99</tspan>
+  </text>
+
+  <text x="30" y="580" font-size="10" fill="#9ca3af">
+    Processed 694,376 bytes, 0.694 megabytes (SI)
+  </text>
+</svg>

@@ -1,0 +1,61 @@
+# Environment files. .env holds configuration only and is gitignored
+# anyway; the pattern is here for the case where someone temporarily
+# puts a secret in it by mistake.
+.env
+.env.*
+!.env.example
+
+# SOPS plaintext. Never commit the decrypted form.
+secrets.yaml
+secrets.yml
+secrets.env
+
+# Local age key material. The key lives in the developer's home
+# directory, not in the repo, but this catches the case where someone
+# copies it here to debug.
+age-keys.txt
+keys.txt
+*.agekey
+
+# secrets are actually in $HOME (but just in case)
+secrets/**
+secrets.*
+decrypted.*
+decrypted.secrets.*
+!secrets/secrets.enc.*
+
+# Runtime logs
+logs/
+*.log
+
+# Binaries
+bin/
+
+# Node modules
+node_modules/
+
+# Coverage
+coverage.out
+coverage.raw
+coverage.src
+coverage.html
+coverage-src.html
+
+# PID file
+.pid
+
+# CSS build output (if generated)
+static/css/output.css   # uncomment if you regenerate it per build
+output.css
+
+# Go
+*.exe
+*.test
+*.out
+vendor/
+
+# Editor and OS
+.idea/
+.vscode/
+.DS_Store
+*.swp

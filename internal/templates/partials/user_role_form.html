@@ -1,0 +1,66 @@
+{{if .error}}
+<div class="bg-red-50 border-l-4 border-red-500 p-4 mb-4 rounded">
+    <div class="flex">
+        <div class="flex-shrink-0">
+            <svg class="h-5 w-5 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+            </svg>
+        </div>
+        <div class="ml-3">
+            <p class="text-sm text-red-700">{{.error}}</p>
+        </div>
+    </div>
+</div>
+{{end}}
+
+<div id="user-role-form-wrapper" class="bg-amber-50 p-6 rounded-lg mb-4 border border-amber-200 fade-in">
+    <h3 class="text-lg font-semibold text-gray-900 mb-1">Change Role</h3>
+    <p class="text-sm text-gray-600 mb-4">
+        Changing a user's role revokes all of their sessions. They will need to sign in again
+        to receive a token carrying the new role.
+    </p>
+
+    <form hx-put="/web/users/{{.user.ID}}/role"
+          hx-target="#user-{{.user.ID}}"
+          hx-swap="outerHTML"
+          class="space-y-4">
+
+        <input type="hidden" name="csrf_token" value="{{.csrf_token}}">
+
+        <div>
+            <p class="text-sm text-gray-700 mb-2">
+                User: <span class="font-medium">{{.user.Username}}</span>
+                ({{.user.Email}})
+            </p>
+            <p class="text-sm text-gray-700 mb-4">
+                Current role: <span class="font-medium">{{.user.Role}}</span>
+            </p>
+        </div>
+
+        <div>
+            <label for="role" class="block text-sm font-medium text-gray-700">New Role</label>
+            <select name="role"
+                    id="role"
+                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 transition">
+                {{range .roles}}
+                <option value="{{.}}" {{if eq . $.user.Role}}selected{{end}}>{{.}}</option>
+                {{end}}
+            </select>
+        </div>
+
+        <div class="flex justify-end space-x-3 pt-4 border-t border-amber-200">
+            <button type="button"
+                    class="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50 transition"
+                    onclick="document.getElementById('user-role-form-wrapper').remove()">
+                Cancel
+            </button>
+            <button type="submit"
+                    class="px-4 py-2 bg-amber-600 text-white rounded-md hover:bg-amber-700 transition flex items-center gap-2">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+                </svg>
+                Change Role
+            </button>
+        </div>
+    </form>
+</div>

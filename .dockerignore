@@ -1,0 +1,36 @@
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+
+# The SOPS plaintext must never be in the image.
+secrets/secrets.yaml
+secrets/secrets.yml
+secrets/secrets.env
+
+# Age key material must never be in the image. The private key arrives
+# at runtime as a Fly Secret.
+*.agekey
+age-keys.txt
+keys.txt
+
+# Editor and OS
+.idea/
+.vscode/
+.DS_Store
+*.swp
+*.swo
+
+# Build artifacts
+mywebapp
+*.test
+*.out
+vendor/
+
+# Documentation and tooling
+docs/
+makefile
+Makefile
+README.md
+*.adoc
