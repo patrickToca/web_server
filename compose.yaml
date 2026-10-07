@@ -13,18 +13,22 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    # Local-only image: build it locally instead of pulling from a registry.
+    # Use `docker compose up --build` after changing the Dockerfile or source.
     image: mywebapp:debug
+    pull_policy: never
     ports:
       - "8080:8080"
     env_file:
       - .env.docker.local
+    # Reuse Docker's default bridge, which can reach the host PostgreSQL
+    # endpoint in this environment.
+    network_mode: bridge
     extra_hosts:
-      # Makes host.docker.internal resolve on Linux, where Docker does not
-      # provide this name by default.
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/health"]
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
       interval: 10s
       timeout: 3s
       retries: 5
