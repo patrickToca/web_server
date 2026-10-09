@@ -54,7 +54,10 @@ LDFLAGS := -X $(PKG).Version=$(VERSION) \
            -X $(PKG).BuildDate=$(DATE) \
            -X $(PKG).GitState=$(STATE)
 
-# Load .env file and export variables
+# Load .env file and export variables. .env holds configuration only;
+# it never contains secrets. The two passwords the DB targets need are
+# decrypted from the SOPS file by the load-secrets target and written
+# to a mode-0600 temp file that the DB recipes source.
 ifneq (,$(wildcard .env))
     include .env
     export
@@ -64,11 +67,14 @@ endif
 DB_NAME_CLEAN = $(shell printf '%s' '$(DB_NAME)' | tr -d '"'"'")
 TEST_DB_NAME_CLEAN = $(shell printf '%s' '$(TEST_DB_NAME)' | tr -d '"'"'")
 
-# Production database URL
-DB_URL = postgres://$(DB_USER):$(DB_PASSWORD)@$(DB_HOST):$(DB_PORT)/$(DB_NAME_CLEAN)?sslmode=$(DB_SSLMODE)
+# Secrets file. The DB targets read from it; the application reads the
+# same file at boot via internal/credentials. One source of truth.
+SOPS_FILE = secrets/secrets.enc.yaml
 
-# Test database URL
-TEST_DB_URL = postgres://$(TEST_DB_USER):$(TEST_DB_PASSWORD)@$(TEST_DB_HOST):$(TEST_DB_PORT)/$(TEST_DB_NAME_CLEAN)?sslmode=$(TEST_DB_SSLMODE)
+# Where load-secrets writes the decrypted passwords for the DB
+# recipes to source. Mode 0600, removed by `make clean`. The name is
+# gitignored.
+SECRETS_ENV = $(CURDIR)/.make-secrets.env
 
 # Port configuration
 PORT     ?= 8080
@@ -103,6 +109,60 @@ help: ## Show this help message
 	@printf "\n$(GREEN)Testing & Quality:$(NC)\n"
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## .*$$/ && ($$1 ~ /^(test|fmt|lint|coverage)/) {printf "  $(YELLOW)%-20s$(NC) %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 	@printf "\n"
+
+# ============================================
+# Secrets
+# ============================================
+#
+# DB_PASSWORD and TEST_DB_PASSWORD live in secrets/secrets.enc.yaml,
+# not in .env. The Go application reads them via internal/credentials
+# at boot. The migrate binary and psql do not know about SOPS, so the
+# makefile has to decrypt the file and make the values available
+# before any target that connects to Postgres can run.
+#
+# The load-secrets target below decrypts the two passwords once per
+# make invocation and writes them to a mode-0600 file. Every DB
+# target depends on it and sources the file before using the URL.
+
+.PHONY: require-sops
+require-sops:
+	@if [ ! -f "$(SOPS_FILE)" ]; then \
+		printf "$(RED)❌ $(SOPS_FILE) not found.$(NC)\n"; \
+		printf "$(YELLOW)   The DB targets need the decrypted password.$(NC)\n"; \
+		exit 1; \
+	fi
+	@if ! command -v sops >/dev/null; then \
+		printf "$(RED)❌ sops not found in PATH.$(NC)\n"; \
+		printf "$(YELLOW)   Install: https://github.com/getsops/sops/releases$(NC)\n"; \
+		exit 1; \
+	fi
+
+.PHONY: load-secrets
+load-secrets: require-sops
+	@umask 077; \
+	if [ -f "$(SECRETS_ENV)" ] && [ "$(SECRETS_ENV)" -nt "$(SOPS_FILE)" ]; then \
+		exit 0; \
+	fi; \
+	sops --decrypt --extract '["DB_PASSWORD"]' "$(SOPS_FILE)" > "$(SECRETS_ENV).tmp" 2>/dev/null || { \
+		printf "$(RED)❌ Failed to decrypt DB_PASSWORD from $(SOPS_FILE).$(NC)\n"; \
+		printf "$(YELLOW)   Is the age key available? Run: sops --decrypt $(SOPS_FILE) | head$(NC)\n"; \
+		rm -f "$(SECRETS_ENV).tmp"; \
+		exit 1; \
+	}; \
+	printf 'DB_PASSWORD=%s\n' "$$(cat $(SECRETS_ENV).tmp)" > "$(SECRETS_ENV)"; \
+	sops --decrypt --extract '["TEST_DB_PASSWORD"]' "$(SOPS_FILE)" > "$(SECRETS_ENV).tmp" 2>/dev/null || { \
+		printf "$(RED)❌ Failed to decrypt TEST_DB_PASSWORD from $(SOPS_FILE).$(NC)\n"; \
+		rm -f "$(SECRETS_ENV).tmp" "$(SECRETS_ENV)"; \
+		exit 1; \
+	}; \
+	printf 'TEST_DB_PASSWORD=%s\n' "$$(cat $(SECRETS_ENV).tmp)" >> "$(SECRETS_ENV)"; \
+	rm -f "$(SECRETS_ENV).tmp"; \
+	printf "$(GREEN)✅ Secrets loaded from $(SOPS_FILE)$(NC)\n"
+
+.PHONY: clear-secrets
+clear-secrets: ## Remove the cached decrypted passwords
+	@rm -f "$(SECRETS_ENV)" "$(SECRETS_ENV).tmp"
+	@printf "$(GREEN)✅ Cached secrets removed$(NC)\n"
 
 # ============================================
 # Application Management
@@ -180,6 +240,7 @@ clean: stop ## Clean build artifacts
 	rm -rf node_modules/
 	rm -f static/css/output.css
 	rm -f $(PID_FILE)
+	rm -f $(SECRETS_ENV) $(SECRETS_ENV).tmp
 	rm -f coverage.out coverage.raw coverage.src coverage.html coverage-src.html
 	go clean -modcache
 	@printf "$(GREEN)✅ Clean complete!$(NC)\n"
@@ -293,6 +354,12 @@ $(IMAGES_DIR)/%.svg: $(DIAGRAMS_DIR)/%.puml
 	}
 	@mkdir -p $(IMAGES_DIR)
 	@$(PLANTUML) -tsvg "$<"
+	@if [ ! -f "$(DIAGRAMS_DIR)/$*.svg" ]; then \
+		printf "$(RED)❌ expected $(DIAGRAMS_DIR)/$*.svg after rendering $<$(NC)\n"; \
+		printf "$(RED)   check for an '!output' directive or a name on the @startuml line$(NC)\n"; \
+		printf "$(RED)   found instead:$$(ls -1 $(DIAGRAMS_DIR)/*.svg 2>/dev/null | sed 's/^/\n     /')$(NC)\n"; \
+		exit 1; \
+	fi
 	@mv "$(DIAGRAMS_DIR)/$*.svg" "$@"
 	@printf "$(GREEN)✅ %s$(NC)\n" "$@"
 
@@ -420,15 +487,21 @@ generate: ## Generate SQLC code
 # ============================================
 
 .PHONY: migrate-up
-migrate-up: ## Run database migrations up
+migrate-up: load-secrets ## Run database migrations up
 	@printf "$(GREEN)📊 Running migrations up on database $(DB_NAME_CLEAN)...$(NC)\n"
-	migrate -path $(MIGRATIONS_DIR) -database "$(DB_URL)" up
+	@set -a; . "$(SECRETS_ENV)"; set +a; \
+	migrate -path $(MIGRATIONS_DIR) \
+		-database "postgres://$(DB_USER):$$DB_PASSWORD@$(DB_HOST):$(DB_PORT)/$(DB_NAME_CLEAN)?sslmode=$(DB_SSLMODE)" \
+		up
 	@printf "$(GREEN)✅ Migrations complete!$(NC)\n"
 
 .PHONY: migrate-down
-migrate-down: ## Run database migrations down
+migrate-down: load-secrets ## Run database migrations down
 	@printf "$(YELLOW)📊 Running migrations down on database $(DB_NAME_CLEAN)...$(NC)\n"
-	migrate -path $(MIGRATIONS_DIR) -database "$(DB_URL)" down
+	@set -a; . "$(SECRETS_ENV)"; set +a; \
+	migrate -path $(MIGRATIONS_DIR) \
+		-database "postgres://$(DB_USER):$$DB_PASSWORD@$(DB_HOST):$(DB_PORT)/$(DB_NAME_CLEAN)?sslmode=$(DB_SSLMODE)" \
+		down
 	@printf "$(GREEN)✅ Migrations rolled back!$(NC)\n"
 
 .PHONY: migrate-create
@@ -443,9 +516,10 @@ migrate-create: ## Create a new migration (usage: make migrate-create name=creat
 	@printf "$(GREEN)✅ Migration created!$(NC)\n"
 
 .PHONY: seed
-seed: ## Seed the production database with demo users
+seed: load-secrets ## Seed the production database with demo users
 	@printf "$(GREEN)🌱 Seeding database $(DB_NAME_CLEAN)...$(NC)\n"
-	@if [ -f scripts/seed.go ]; then \
+	@set -a; . "$(SECRETS_ENV)"; set +a; \
+	if [ -f scripts/seed.go ]; then \
 		go run scripts/seed.go; \
 	else \
 		printf "$(RED)❌ scripts/seed.go not found.$(NC)\n"; \
@@ -457,20 +531,27 @@ seed: ## Seed the production database with demo users
 db-reset: stop migrate-down migrate-up seed ## Reset production database (down, up, seed)
 
 .PHONY: db-shell
-db-shell: ## Open PostgreSQL shell against the production database
+db-shell: load-secrets ## Open PostgreSQL shell against the production database
 	@printf "$(GREEN)🐘 Opening PostgreSQL shell for database $(DB_NAME_CLEAN)...$(NC)\n"
-	psql -d $(DB_NAME_CLEAN)
+	@set -a; . "$(SECRETS_ENV)"; set +a; \
+	PGPASSWORD="$$DB_PASSWORD" psql \
+		-h $(DB_HOST) -p $(DB_PORT) -U $(DB_USER) -d $(DB_NAME_CLEAN)
 
 .PHONY: db-check
-db-check: ## Check production database connection
+db-check: load-secrets ## Check production database connection
 	@printf "$(GREEN)🔍 Checking database connection...$(NC)\n"
-	@psql -d $(DB_NAME_CLEAN) -c "SELECT 'Connected successfully' as status;"
+	@set -a; . "$(SECRETS_ENV)"; set +a; \
+	PGPASSWORD="$$DB_PASSWORD" psql \
+		-h $(DB_HOST) -p $(DB_PORT) -U $(DB_USER) -d $(DB_NAME_CLEAN) \
+		-c "SELECT 'Connected successfully' as status;"
 	@printf "$(GREEN)✅ Database connection successful!$(NC)\n"
 
 .PHONY: db-tables
-db-tables: ## List all tables in the production database
+db-tables: load-secrets ## List all tables in the production database
 	@printf "$(GREEN)📋 Listing tables in $(DB_NAME_CLEAN)...$(NC)\n"
-	psql -d $(DB_NAME_CLEAN) -c "\dt"
+	@set -a; . "$(SECRETS_ENV)"; set +a; \
+	PGPASSWORD="$$DB_PASSWORD" psql \
+		-h $(DB_HOST) -p $(DB_PORT) -U $(DB_USER) -d $(DB_NAME_CLEAN) -c "\dt"
 
 # ============================================
 # Test database
@@ -484,17 +565,23 @@ db-tables: ## List all tables in the production database
 # if TEST_DB_NAME does not look like a test database.
 
 .PHONY: test-db-create
-test-db-create: ## Create the test database (idempotent)
+test-db-create: load-secrets ## Create the test database (idempotent)
 	@printf "$(GREEN)🐘 Creating test database $(TEST_DB_NAME_CLEAN)...$(NC)\n"
-	@psql -h $(TEST_DB_HOST) -p $(TEST_DB_PORT) -U $(TEST_DB_USER) \
+	@set -a; . "$(SECRETS_ENV)"; set +a; \
+	if PGPASSWORD="$$TEST_DB_PASSWORD" psql \
+		-h $(TEST_DB_HOST) -p $(TEST_DB_PORT) -U $(TEST_DB_USER) \
 		-d postgres -tc "SELECT 1 FROM pg_database WHERE datname = '$(TEST_DB_NAME_CLEAN)'" \
-		| grep -q 1 \
-		|| psql -h $(TEST_DB_HOST) -p $(TEST_DB_PORT) -U $(TEST_DB_USER) \
-			-d postgres -c "CREATE DATABASE $(TEST_DB_NAME_CLEAN)"
+		| grep -q 1; then \
+		:; \
+	else \
+		PGPASSWORD="$$TEST_DB_PASSWORD" psql \
+			-h $(TEST_DB_HOST) -p $(TEST_DB_PORT) -U $(TEST_DB_USER) \
+			-d postgres -c "CREATE DATABASE $(TEST_DB_NAME_CLEAN)"; \
+	fi
 	@printf "$(GREEN)✅ Test database ready$(NC)\n"
 
 .PHONY: test-db-drop
-test-db-drop: ## Drop the test database (with confirmation)
+test-db-drop: load-secrets ## Drop the test database (with confirmation)
 	@printf "$(YELLOW)⚠️  About to drop test database: $(TEST_DB_NAME_CLEAN)$(NC)\n"
 	@printf "$(YELLOW)   Host: $(TEST_DB_HOST):$(TEST_DB_PORT)$(NC)\n"
 	@read -p "Type 'yes' to confirm: " confirm; \
@@ -502,20 +589,26 @@ test-db-drop: ## Drop the test database (with confirmation)
 		printf "$(YELLOW)Aborted.$(NC)\n"; \
 		exit 1; \
 	fi
-	@psql -h $(TEST_DB_HOST) -p $(TEST_DB_PORT) -U $(TEST_DB_USER) \
+	@set -a; . "$(SECRETS_ENV)"; set +a; \
+	PGPASSWORD="$$TEST_DB_PASSWORD" psql \
+		-h $(TEST_DB_HOST) -p $(TEST_DB_PORT) -U $(TEST_DB_USER) \
 		-d postgres -c "DROP DATABASE IF EXISTS $(TEST_DB_NAME_CLEAN)"
 	@printf "$(GREEN)✅ Test database dropped$(NC)\n"
 
 .PHONY: test-db-shell
-test-db-shell: ## Open psql against the test database
+test-db-shell: load-secrets ## Open psql against the test database
 	@printf "$(GREEN)🐘 Opening test database shell for $(TEST_DB_NAME_CLEAN)...$(NC)\n"
-	@psql -h $(TEST_DB_HOST) -p $(TEST_DB_PORT) -U $(TEST_DB_USER) \
+	@set -a; . "$(SECRETS_ENV)"; set +a; \
+	PGPASSWORD="$$TEST_DB_PASSWORD" psql \
+		-h $(TEST_DB_HOST) -p $(TEST_DB_PORT) -U $(TEST_DB_USER) \
 		-d $(TEST_DB_NAME_CLEAN)
 
 .PHONY: test-db-reset
-test-db-reset: ## Recreate the test database from scratch
+test-db-reset: load-secrets ## Recreate the test database from scratch
 	@printf "$(YELLOW)🧹 Resetting test database...$(NC)\n"
-	@psql -h $(TEST_DB_HOST) -p $(TEST_DB_PORT) -U $(TEST_DB_USER) \
+	@set -a; . "$(SECRETS_ENV)"; set +a; \
+	PGPASSWORD="$$TEST_DB_PASSWORD" psql \
+		-h $(TEST_DB_HOST) -p $(TEST_DB_PORT) -U $(TEST_DB_USER) \
 		-d postgres -c "DROP DATABASE IF EXISTS $(TEST_DB_NAME_CLEAN)"
 	@$(MAKE) test-db-create
 	@printf "$(GREEN)✅ Test database reset$(NC)\n"
@@ -528,6 +621,7 @@ test-db-check: ## Show the resolved test database configuration
 	@printf "  TEST_DB_USER=%s\n"     "$(TEST_DB_USER)"
 	@printf "  TEST_DB_NAME=%s\n"     "$(TEST_DB_NAME_CLEAN)"
 	@printf "  TEST_DB_SSLMODE=%s\n"  "$(TEST_DB_SSLMODE)"
+	@printf "  TEST_DB_PASSWORD=%s\n" "(from SOPS, not shown)"
 	@printf "\n$(BLUE)Production database (for comparison):$(NC)\n"
 	@printf "  DB_NAME=%s\n"          "$(DB_NAME_CLEAN)"
 	@if [ "$(TEST_DB_NAME_CLEAN)" = "$(DB_NAME_CLEAN)" ]; then \
@@ -640,15 +734,15 @@ check-env: ## Check environment variables
 	@printf "  DB_USER=%s\n"           "$(DB_USER)"
 	@printf "  DB_NAME=%s (cleaned: %s)\n" "$(DB_NAME)" "$(DB_NAME_CLEAN)"
 	@printf "  DB_SSLMODE=%s\n"        "$(DB_SSLMODE)"
+	@printf "  DB_PASSWORD=%s\n"       "(from SOPS, not in .env)"
 	@printf "  PORT=%s\n"              "$(PORT)"
-	@printf "  DB_URL=%s\n"            "$(DB_URL)"
 	@printf "\n$(BLUE)Test Environment:$(NC)\n"
 	@printf "  TEST_DB_HOST=%s\n"      "$(TEST_DB_HOST)"
 	@printf "  TEST_DB_PORT=%s\n"      "$(TEST_DB_PORT)"
 	@printf "  TEST_DB_USER=%s\n"      "$(TEST_DB_USER)"
 	@printf "  TEST_DB_NAME=%s (cleaned: %s)\n" "$(TEST_DB_NAME)" "$(TEST_DB_NAME_CLEAN)"
 	@printf "  TEST_DB_SSLMODE=%s\n"   "$(TEST_DB_SSLMODE)"
-	@printf "  TEST_DB_URL=%s\n"       "$(TEST_DB_URL)"
+	@printf "  TEST_DB_PASSWORD=%s\n"  "(from SOPS, not in .env)"
 
 .PHONY: info
 info: ## Show project information
@@ -666,6 +760,7 @@ info: ## Show project information
 	@printf "  Go Files: %s files\n" "$$(printf '%s' '$(GO_FILES)' | wc -w | tr -d ' ')"
 	@printf "  Diagram sources: %s\n" "$$(printf '%s' '$(PUML_SOURCES)' | wc -w | tr -d ' ')"
 	@printf "  Diagram outputs: %s\n" "$$(printf '%s' '$(SVG_TARGETS)' | wc -w | tr -d ' ')"
+	@printf "  SOPS file: %s\n"  "$(SOPS_FILE)"
 
 # ============================================
 # Directories
