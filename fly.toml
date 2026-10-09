@@ -21,6 +21,8 @@ primary_region = "lhr"   # London. Change to the region nearest you.
   # variable first and skips the go.mod walk, which would fail because
   # the image does not include the source.
   SOPS_PATH = "/app/secrets/secrets.enc.yaml"
+  TRUSTED_PROXIES = "fdaa::/16"
+  APP_ENV = "production"
 
   # Non-secret configuration. These are visible in the Fly dashboard,
   # which is correct: they are not secrets. Secrets are in Fly Secrets

@@ -6,6 +6,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"strings"
 )
@@ -64,4 +65,26 @@ func IsStaging() bool {
 // IsDevelopment reports whether the process is running in development.
 func IsDevelopment() bool {
 	return Current() == EnvDevelopment
+}
+
+// IsProductionOrStaging reports whether the process is running in a
+// deployed environment. Both environments enforce the same security
+// posture for HSTS, CSP, cookies, and secrets.
+func IsProductionOrStaging() bool {
+	env := Current()
+	return env == EnvProduction || env == EnvStaging
+}
+
+// MustBeProduction returns nil in development, and returns an error
+// naming the reason in production and staging.
+//
+// It is used by boot-time checks that must not run in a developer's
+// `go run` but must abort the process in a deployed environment. The
+// reason string is what the operator sees in the boot log; it should
+// name the variable or configuration item they need to fix.
+func MustBeProduction(reason string) error {
+	if !IsProductionOrStaging() {
+		return nil
+	}
+	return fmt.Errorf("%s (APP_ENV=%s)", reason, Current())
 }

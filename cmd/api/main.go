@@ -29,8 +29,9 @@ func main() {
 	logger, cleanup, err := logging.Setup()
 	if err != nil {
 		// File logging was requested but failed. Fall back to stderr
-		// rather than refusing to start. The container is the case where
-		// this matters: LOG_FILE is unset, so err is nil.
+		// rather than refusing to start. The container is the case
+		// where this matters: LOG_FILE is unset, so err is nil and
+		// this branch is not reached.
 		slog.Error("failed to set up file logging; using stderr", "error", err)
 		logger = slog.New(slog.NewJSONHandler(os.Stderr, nil))
 		slog.SetDefault(logger)
@@ -129,13 +130,32 @@ func main() {
 	}
 	router := gin.New()
 
-	if err := router.SetTrustedProxies([]string{
-		"10.0.0.0/8",
-		"172.16.0.0/12",
-		"192.168.0.0/16",
-	}); err != nil {
+	// Trusted proxies. The list comes from TRUSTED_PROXIES, a
+	// comma-separated set of CIDRs. The default is empty, which means
+	// "trust nothing": Gin's ClientIP() returns the immediate peer
+	// address and ignores any X-Forwarded-For header the client sends.
+	//
+	// This is the correct default for an application exposed directly
+	// to the internet. Behind a load balancer, set TRUSTED_PROXIES to
+	// the load balancer's range so ClientIP() reflects the real client
+	// address. The rate limiter keys on ClientIP(); if the list is
+	// wrong, either every request looks like it comes from the load
+	// balancer (rate limit too strict) or any request can spoof the
+	// header (rate limit too loose).
+	trustedProxies, err := middleware.LoadTrustedProxies()
+	if err != nil {
+		logger.Error("trusted proxies configuration failed", "error", err)
+		os.Exit(1)
+	}
+	if err := router.SetTrustedProxies(trustedProxies); err != nil {
 		logger.Error("SetTrustedProxies failed", "error", err)
 		os.Exit(1)
+	}
+	if len(trustedProxies) == 0 {
+		logger.Info("trusted proxies: none (X-Forwarded-For is ignored)")
+	} else {
+		logger.Info("trusted proxies configured",
+			"cidrs", trustedProxies)
 	}
 	router.RemoteIPHeaders = []string{"X-Forwarded-For"}
 
@@ -150,11 +170,28 @@ func main() {
 	}
 	cookieCfg := web.LoadCookieConfig()
 
+	// Security headers. In production and staging the loader refuses
+	// to return a configuration with HSTS off or a report-only CSP.
+	// The boot fails; the operator sees the error and fixes the
+	// environment. In development both are permitted, because a
+	// developer on plain HTTP cannot use HSTS and wants CSP
+	// violations visible without blocking the app.
+	secHeadersCfg, err := middleware.LoadSecurityHeadersConfig()
+	if err != nil {
+		logger.Error("security headers configuration failed", "error", err)
+		os.Exit(1)
+	}
+	logger.Info("security headers configuration",
+		"hsts_max_age", secHeadersCfg.HSTSMaxAge,
+		"hsts_include_subdomains", secHeadersCfg.HSTSIncludeSubdomains,
+		"hsts_preload", secHeadersCfg.HSTSPreload,
+		"csp_report_only", secHeadersCfg.CSPReportOnly)
+
 	authHandler := web.NewAuthHandler(userService, sessionService, jwtService, csrfCfg)
 
 	router.Use(middleware.RequestID(logger))
 	router.Use(middleware.BodyLimit())
-	router.Use(middleware.SecurityHeaders(middleware.LoadSecurityHeadersConfig()))
+	router.Use(middleware.SecurityHeaders(secHeadersCfg))
 	router.Use(middleware.NoCache())
 	router.Use(gin.Recovery())
 	router.Use(middleware.AccessLog(logger))

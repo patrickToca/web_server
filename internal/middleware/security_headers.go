@@ -1,22 +1,35 @@
 // Package middleware provides reusable Gin middleware for the mywebapp
-// HTTP layer: gzip compression, per-client rate limiting, request IDs,
-// access logging, and security headers.
+// HTTP layer.
 package middleware
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
+
+	"mywebapp/internal/config"
 )
 
+// ErrInsecureProductionConfig is returned by LoadSecurityHeadersConfig
+// when the deployment is production or staging and the configuration
+// disables a control that must be on in those environments.
+var ErrInsecureProductionConfig = errors.New("insecure security-headers configuration")
+
 // SecurityHeadersConfig controls which headers are emitted and how strict
-// the Content-Security-Policy is. Zero value is safe for development.
+// the Content-Security-Policy is.
 type SecurityHeadersConfig struct {
 	// CSPReportOnly, when true, sends Content-Security-Policy-Report-Only
 	// instead of the enforcing header. Use this in dev/staging to observe
 	// violations before enforcing. Controlled by CSP_REPORT_ONLY env var.
+	//
+	// In production and staging the loader refuses to return a config
+	// with this set to true. Report-only is a development posture; a
+	// deployed environment that ships without an enforcing CSP has no
+	// protection at all.
 	CSPReportOnly bool
 
 	// CSPReportURI, when non-empty, is added as a report-uri directive so
@@ -24,16 +37,25 @@ type SecurityHeadersConfig struct {
 	CSPReportURI string
 
 	// HSTSMaxAge is the max-age (seconds) for Strict-Transport-Security.
-	// 0 disables HSTS (correct for local dev over plain HTTP).
-	// Controlled by HSTS_MAX_AGE (default 0).
+	// 0 disables HSTS. Controlled by HSTS_MAX_AGE (default 0).
+	//
+	// In production and staging the loader refuses to return a config
+	// with this set to 0. HSTS off in a deployed environment means the
+	// browser will happily follow a downgrade to HTTP, which is the
+	// exact attack HSTS exists to prevent.
 	HSTSMaxAge int
 
 	// HSTSIncludeSubdomains adds includeSubDomains to HSTS.
 	// Controlled by HSTS_INCLUDE_SUBDOMAINS (default false).
 	HSTSIncludeSubdomains bool
 
-	// HSTSPreload adds preload to HSTS. Implies includeSubDomains.
+	// HSTSPreload adds preload to HSTS. Implies includeSubdomains.
 	// Controlled by HSTS_PRELOAD (default false).
+	//
+	// Preload is a one-way commitment: submission to the preload list
+	// is permanent for a browser release cycle and cannot be undone in
+	// under six weeks. It is not enabled by default. Enable it only
+	// once you are certain the domain will serve HTTPS forever.
 	HSTSPreload bool
 
 	// FrameOptions is the X-Frame-Options value: DENY or SAMEORIGIN.
@@ -59,24 +81,56 @@ type SecurityHeadersConfig struct {
 
 // LoadSecurityHeadersConfig builds a config from environment variables,
 // falling back to safe defaults.
-func LoadSecurityHeadersConfig() SecurityHeadersConfig {
-	return SecurityHeadersConfig{
+//
+// In production and staging the loader enforces two constraints and
+// returns ErrInsecureProductionConfig if either is violated:
+//
+//   - HSTS_MAX_AGE must be greater than zero.
+//   - CSP_REPORT_ONLY must be false.
+//
+// Both defaults are safe for development (HSTS off, CSP report-only)
+// and unsafe for a deployed environment. The check is here rather than
+// in a comment because a comment does not fail a boot.
+func LoadSecurityHeadersConfig() (SecurityHeadersConfig, error) {
+	cfg := SecurityHeadersConfig{
 		CSPReportOnly:             getEnvBool("CSP_REPORT_ONLY", true),
 		CSPReportURI:              getEnv("CSP_REPORT_URI", ""),
 		HSTSMaxAge:                getEnvInt("HSTS_MAX_AGE", 0),
 		HSTSIncludeSubdomains:     getEnvBool("HSTS_INCLUDE_SUBDOMAINS", false),
-		HSTSPreload:               getEnvBool("HSTS_PRELOAD", false),
+		HSTSPreload:               getEnvBool("HSTSPRELOAD", false),
 		FrameOptions:              getEnv("X_FRAME_OPTIONS", "DENY"),
 		ReferrerPolicy:            getEnv("REFERRER_POLICY", "strict-origin-when-cross-origin"),
 		PermissionsPolicy:         getEnv("PERMISSIONS_POLICY", defaultPermissionsPolicy),
 		CrossOriginOpenerPolicy:   getEnv("COOP", "same-origin"),
 		CrossOriginResourcePolicy: getEnv("CORP", "same-origin"),
 	}
+
+	if config.IsProductionOrStaging() {
+		if cfg.HSTSMaxAge == 0 {
+			return cfg, fmt.Errorf(
+				"%w: HSTS_MAX_AGE is 0 in %s; set it to at least 31536000",
+				ErrInsecureProductionConfig, config.Current())
+		}
+		if cfg.CSPReportOnly {
+			return cfg, fmt.Errorf(
+				"%w: CSP_REPORT_ONLY is true in %s; set it to false once you have confirmed "+
+					"the CSP does not break the application",
+				ErrInsecureProductionConfig, config.Current())
+		}
+		if cfg.HSTSPreload && !cfg.HSTSIncludeSubdomains {
+			return cfg, fmt.Errorf(
+				"%w: HSTS_PRELOAD is true but HSTS_INCLUDE_SUBDOMAINS is false; "+
+					"preload requires includeSubDomains",
+				ErrInsecureProductionConfig)
+		}
+	}
+
+	return cfg, nil
 }
 
 // defaultPermissionsPolicy disables features the app does not use. Browsers
 // ignore unknown features, so this is forward-compatible. Camera/mic/geo
-// are disabled outright; we don't ship any code that calls them.
+// are disabled outright; we do not ship any code that calls them.
 const defaultPermissionsPolicy = "accelerometer=(), camera=(), geolocation=(), " +
 	"gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()"
 
@@ -116,19 +170,6 @@ func buildCSP(reportURI string) string {
 
 // SecurityHeaders returns a Gin middleware that sets defence-in-depth HTTP
 // security headers on every response.
-//
-// Headers set:
-//   - Content-Security-Policy (or ...-Report-Only)
-//   - Strict-Transport-Security (only when HSTSMaxAge > 0)
-//   - X-Frame-Options
-//   - X-Content-Type-Options
-//   - Referrer-Policy
-//   - Permissions-Policy
-//   - Cross-Origin-Opener-Policy
-//   - Cross-Origin-Resource-Policy
-//
-// Register this middleware after RequestID/AccessLog so that any CSP
-// violation reports can be correlated with the request_id in access logs.
 func SecurityHeaders(cfg SecurityHeadersConfig) gin.HandlerFunc {
 	csp := buildCSP(cfg.CSPReportURI)
 
@@ -153,8 +194,9 @@ func SecurityHeaders(cfg SecurityHeadersConfig) gin.HandlerFunc {
 			h.Set("Content-Security-Policy", csp)
 		}
 
-		// HSTS is only meaningful over HTTPS. Skip on plain HTTP so
-		// localhost dev isn't pinned to https://.
+		// HSTS is only meaningful over HTTPS. The loader refuses to
+		// return 0 in production, so this branch is reached only in
+		// development.
 		if hsts != "" {
 			h.Set("Strict-Transport-Security", hsts)
 		}
@@ -190,7 +232,7 @@ func SecurityHeaders(cfg SecurityHeadersConfig) gin.HandlerFunc {
 }
 
 // -----------------------------------------------------------------------------
-// Env helpers (kept local to avoid importing pkg/db from middleware)
+// Env helpers
 // -----------------------------------------------------------------------------
 
 func getEnv(key, def string) string {
@@ -218,15 +260,9 @@ func getEnvInt(key string, def int) int {
 	if v == "" {
 		return def
 	}
-	n := 0
-	for _, r := range v {
-		if r < '0' || r > '9' {
-			return def
-		}
-		n = n*10 + int(r-'0')
-		if n > 1<<30 {
-			return def
-		}
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 0 {
+		return def
 	}
 	return n
 }
