@@ -10,6 +10,35 @@ GO_MAIN        = cmd/api/main.go
 GO_FILES       = $(shell find . -name '*.go' -type f -not -path "./vendor/*" -not -path "./.git/*" -not -path "./bin/*")
 MIGRATIONS_DIR = migrations
 
+# Diagram layout:
+#
+#   docs/diagrams/  — PlantUML sources (.puml). Committed.
+#   docs/images/    — rendered SVGs and any other images the
+#                     Asciidoctor documents reference. Committed.
+#
+# The render runs from the source directory with no -o flag. PlantUML
+# writes the SVG next to its source, and the pattern rule moves it
+# into docs/images/. This avoids the class of bug where PlantUML
+# concatenates a relative input path and a relative output path and
+# produces docs/diagrams/docs/diagrams/... instead of the intended
+# location.
+DIAGRAMS_DIR   = docs/diagrams
+IMAGES_DIR     = docs/images
+PUML_SOURCES   = $(wildcard $(DIAGRAMS_DIR)/*.puml)
+SVG_TARGETS    = $(patsubst $(DIAGRAMS_DIR)/%.puml,$(IMAGES_DIR)/%.svg,$(PUML_SOURCES))
+
+# PlantUML invocation. Override from the command line or the
+# environment if your install differs:
+#
+#   make diagrams PLANTUML=plantuml
+#   make diagrams PLANTUML="java -jar /opt/plantuml/plantuml.jar"
+#   make diagrams PLANTUML="docker run --rm -v $$PWD/docs/diagrams:/data plantuml/plantuml:latest"
+#
+# The default assumes the jar is at the path the how-to document
+# recommends (~/.local/share/plantuml/plantuml.jar), which is where
+# `make install-plantuml` puts it.
+PLANTUML ?= java -jar $(HOME)/.local/share/plantuml/plantuml.jar
+
 # Version metadata (injected via -ldflags -X)
 PKG := mywebapp/internal/version
 
@@ -69,6 +98,8 @@ help: ## Show this help message
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## .*$$/ && ($$1 ~ /^test-db-/) {printf "  $(YELLOW)%-20s$(NC) %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 	@printf "\n$(GREEN)Docker:$(NC)\n"
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## .*$$/ && ($$1 ~ /^docker-/) {printf "  $(YELLOW)%-20s$(NC) %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+	@printf "\n$(GREEN)Diagrams:$(NC)\n"
+	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## .*$$/ && ($$1 ~ /^diagrams/) {printf "  $(YELLOW)%-20s$(NC) %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 	@printf "\n$(GREEN)Testing & Quality:$(NC)\n"
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## .*$$/ && ($$1 ~ /^(test|fmt|lint|coverage)/) {printf "  $(YELLOW)%-20s$(NC) %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 	@printf "\n"
@@ -149,8 +180,11 @@ clean: stop ## Clean build artifacts
 	rm -rf node_modules/
 	rm -f static/css/output.css
 	rm -f $(PID_FILE)
+	rm -f coverage.out coverage.raw coverage.src coverage.html coverage-src.html
 	go clean -modcache
 	@printf "$(GREEN)✅ Clean complete!$(NC)\n"
+	@printf "$(YELLOW)   Rendered diagrams in $(IMAGES_DIR)/ are kept.$(NC)\n"
+	@printf "$(YELLOW)   Use 'make diagrams-clean' to remove them.$(NC)\n"
 
 # ============================================
 # Development
@@ -215,6 +249,116 @@ version-run: ## Query /version on the running server
 	@printf "\n"
 
 # ============================================
+# Diagrams
+# ============================================
+#
+# The .puml sources live in docs/diagrams/. The rendered .svg files
+# live in docs/images/, next to the other images the Asciidoctor
+# documents reference.
+#
+# 'diagrams' renders only the sources that are newer than their
+# output. Running it twice in a row is a no-op the second time.
+#
+# 'diagrams-check' is the CI target: it renders into a temp directory
+# and diffs against the committed SVGs. A non-zero exit means the two
+# have drifted, and the fix is to run 'make diagrams' and commit the
+# result.
+#
+# 'diagrams-force' ignores timestamps and re-renders everything. Use
+# it after installing a new PlantUML version, or when you suspect the
+# cached SVGs are stale but the timestamps say otherwise.
+
+.PHONY: diagrams
+diagrams: $(SVG_TARGETS) ## Render PlantUML diagrams to docs/images/ (only if source is newer)
+	@if [ -z "$(PUML_SOURCES)" ]; then \
+		printf "$(YELLOW)⚠️  No .puml sources found in $(DIAGRAMS_DIR)/$(NC)\n"; \
+		printf "$(YELLOW)   Create one with: $$EDITOR $(DIAGRAMS_DIR)/mydiagram.puml$(NC)\n"; \
+		exit 0; \
+	fi
+	@printf "$(GREEN)📊 Diagrams up to date$(NC)\n"
+
+# Pattern rule: render one .puml, then move the SVG into docs/images/.
+#
+# PlantUML is invoked with only the source path, from the repository
+# root, and no -o flag. It writes the SVG next to the source. The mv
+# then moves it into docs/images/. The intermediate step is
+# deliberate: it sidesteps the path concatenation bug that produces
+# docs/diagrams/docs/diagrams/... when both -o and a directory-bearing
+# input path are given.
+$(IMAGES_DIR)/%.svg: $(DIAGRAMS_DIR)/%.puml
+	@printf "$(GREEN)📊 Rendering %s...$(NC)\n" "$<"
+	@command -v java >/dev/null || { \
+		printf "$(RED)❌ java not found. Install a JRE: sudo apt install default-jre$(NC)\n"; \
+		exit 1; \
+	}
+	@mkdir -p $(IMAGES_DIR)
+	@$(PLANTUML) -tsvg "$<"
+	@mv "$(DIAGRAMS_DIR)/$*.svg" "$@"
+	@printf "$(GREEN)✅ %s$(NC)\n" "$@"
+
+.PHONY: diagrams-force
+diagrams-force: ## Re-render all diagrams regardless of timestamps
+	@printf "$(YELLOW)📊 Forcing render of all diagrams...$(NC)\n"
+	@$(MAKE) --no-print-directory -B diagrams
+	@printf "$(GREEN)✅ All diagrams rendered$(NC)\n"
+
+.PHONY: diagrams-check
+diagrams-check: ## CI: fail if committed SVGs differ from sources
+	@printf "$(GREEN)🔍 Checking diagram freshness...$(NC)\n"
+	@if [ -z "$(PUML_SOURCES)" ]; then \
+		printf "$(YELLOW)⚠️  No .puml sources found in $(DIAGRAMS_DIR)/$(NC)\n"; \
+		exit 0; \
+	fi
+	@tmpdir=$$(mktemp -d); \
+	trap "rm -rf $$tmpdir" EXIT; \
+	for src in $(PUML_SOURCES); do \
+		name=$$(basename "$$src" .puml); \
+		printf "$(YELLOW)   checking %s...$(NC)\n" "$$name"; \
+		( cd $(DIAGRAMS_DIR) && $(PLANTUML) -tsvg -o "$$tmpdir" "$$(basename $$src)" >/dev/null 2>&1 ) || { \
+			printf "$(RED)❌ PlantUML failed on $$src$(NC)\n"; \
+			exit 1; \
+		}; \
+		rendered="$$tmpdir/$$name.svg"; \
+		committed="$(IMAGES_DIR)/$$name.svg"; \
+		if [ ! -f "$$committed" ]; then \
+			printf "$(RED)❌ $$committed is missing; run 'make diagrams'$(NC)\n"; \
+			exit 1; \
+		fi; \
+		if ! diff -q "$$rendered" "$$committed" >/dev/null; then \
+			printf "$(RED)❌ $$committed is stale; run 'make diagrams' and commit$(NC)\n"; \
+			exit 1; \
+		fi; \
+	done
+	@printf "$(GREEN)✅ All diagrams are fresh$(NC)\n"
+
+.PHONY: diagrams-clean
+diagrams-clean: ## Remove rendered SVG files from docs/images/ (sources are kept)
+	@printf "$(YELLOW)🧹 Removing rendered diagrams...$(NC)\n"
+	@rm -f $(SVG_TARGETS)
+	@printf "$(GREEN)✅ Diagrams cleaned$(NC)\n"
+
+.PHONY: diagrams-list
+diagrams-list: ## List diagram sources and their rendered outputs
+	@printf "$(BLUE)Diagram sources:$(NC)\n"
+	@if [ -z "$(PUML_SOURCES)" ]; then \
+		printf "  $(YELLOW)(none found in $(DIAGRAMS_DIR)/)$(NC)\n"; \
+		exit 0; \
+	fi
+	@for src in $(PUML_SOURCES); do \
+		name=$$(basename "$$src" .puml); \
+		svg="$(IMAGES_DIR)/$$name.svg"; \
+		if [ -f "$$svg" ]; then \
+			if [ "$$src" -nt "$$svg" ]; then \
+				printf "  $(YELLOW)%-40s (stale)$(NC)\n" "$$src"; \
+			else \
+				printf "  $(GREEN)%-40s (fresh)$(NC)\n" "$$src"; \
+			fi; \
+		else \
+			printf "  $(RED)%-40s (not rendered)$(NC)\n" "$$src"; \
+		fi; \
+	done
+
+# ============================================
 # Dependencies
 # ============================================
 
@@ -231,6 +375,26 @@ install: ## Install all dependencies
 	go install github.com/air-verse/air@latest
 	go install -tags 'postgres' github.com/golang-migrate/migrate/v4/cmd/migrate@latest
 	@printf "$(GREEN)✅ All dependencies installed!$(NC)\n"
+
+.PHONY: install-plantuml
+install-plantuml: ## Download the PlantUML jar to ~/.local/share/plantuml/
+	@printf "$(GREEN)📦 Installing PlantUML...$(NC)\n"
+	@mkdir -p $(HOME)/.local/share/plantuml
+	@if [ -f $(HOME)/.local/share/plantuml/plantuml.jar ]; then \
+		printf "$(YELLOW)⚠️  $(HOME)/.local/share/plantuml/plantuml.jar already exists$(NC)\n"; \
+		printf "$(YELLOW)   Remove it first to reinstall$(NC)\n"; \
+	else \
+		curl -fL -o $(HOME)/.local/share/plantuml/plantuml.jar \
+			https://github.com/plantuml/plantuml/releases/latest/download/plantuml.jar; \
+		file $(HOME)/.local/share/plantuml/plantuml.jar | grep -q 'Zip archive' || { \
+			printf "$(RED)❌ Download did not produce a jar (probably an HTML error page)$(NC)\n"; \
+			rm -f $(HOME)/.local/share/plantuml/plantuml.jar; \
+			exit 1; \
+		}; \
+		printf "$(GREEN)✅ PlantUML installed$(NC)\n"; \
+	fi
+	@command -v java >/dev/null || \
+		printf "$(YELLOW)   Install a JRE: sudo apt install default-jre$(NC)\n"
 
 .PHONY: generate
 generate: ## Generate SQLC code
@@ -452,14 +616,17 @@ docker-logs: ## Show Docker logs
 # ============================================
 
 .PHONY: setup
-setup: install generate migrate-up build-css ## Complete project setup
+setup: install generate migrate-up build-css diagrams ## Complete project setup
 
 .PHONY: dev-setup
-dev-setup: install generate migrate-up build-css ## Setup and start development
+dev-setup: install generate migrate-up build-css diagrams ## Setup and start development
 	@printf "$(GREEN)✅ Setup complete! Run 'make dev' to start development.$(NC)\n"
 
 .PHONY: all
-all: clean install generate migrate-up build-css build ## Clean, install, migrate, build
+all: clean install generate migrate-up build-css build diagrams ## Clean, install, migrate, build, render diagrams
+
+.PHONY: ci
+ci: lint test diagrams-check ## What CI runs
 
 # ============================================
 # Utilities
@@ -497,6 +664,8 @@ info: ## Show project information
 	@printf "  Commit: %s\n"    "$(COMMIT)"
 	@printf "  Branch: %s\n"    "$(BRANCH)"
 	@printf "  Go Files: %s files\n" "$$(printf '%s' '$(GO_FILES)' | wc -w | tr -d ' ')"
+	@printf "  Diagram sources: %s\n" "$$(printf '%s' '$(PUML_SOURCES)' | wc -w | tr -d ' ')"
+	@printf "  Diagram outputs: %s\n" "$$(printf '%s' '$(SVG_TARGETS)' | wc -w | tr -d ' ')"
 
 # ============================================
 # Directories
@@ -520,6 +689,8 @@ dirs: ## Create required directories
 	mkdir -p pkg/db
 	mkdir -p migrations
 	mkdir -p scripts
+	mkdir -p $(DIAGRAMS_DIR)
+	mkdir -p $(IMAGES_DIR)
 	@printf "$(GREEN)✅ Directories created!$(NC)\n"
 
 # ============================================

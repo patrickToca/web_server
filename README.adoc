@@ -11,13 +11,13 @@
 ifdef::env-github,env-browser[:outfilesuffix: .adoc]
 :sectnums:
 :sectnumlevels: 3
-:description: MyWebApp is a modern Go web application template combining Gin, HTMX, Tailwind CSS, PostgreSQL, SQLC, and a clean architecture. It ships with structured logging (slog), per-request correlation IDs, gzip compression, token-bucket rate limiting, defence-in-depth HTTP security headers, secure cookies, CSRF protection with HMAC-signed tokens, a two-token JWT scheme with short-lived access tokens and revocable refresh tokens, a public home page and a read-only member directory, build-time version metadata exposed at /version, an isolated test database environment, and a fully working users CRUD UI rendered with HTMX.
-:keywords: go, gin, htmx, tailwind, postgresql, sqlc, slog, jwt, rate limiting, gzip, clean architecture, csp, hsts, csrf, cookies, samesite, refresh-token, sessions, versioning, home-page, members, git-flow, testing, test-database
+:description: MyWebApp is a modern Go web application template combining Gin, HTMX, Tailwind CSS, PostgreSQL, SQLC, and a clean architecture. It ships with structured logging (slog), per-request correlation IDs, gzip compression, token-bucket rate limiting, defence-in-depth HTTP security headers, secure cookies, CSRF protection with HMAC-signed tokens, a two-token JWT scheme with short-lived access tokens and revocable refresh tokens, a public home page and a read-only member directory, build-time version metadata exposed at /version, an isolated test database environment, Docker and Docker Compose deployment, Fly.io deployment with SOPS-encrypted secrets, and a fully working users CRUD UI rendered with HTMX.
+:keywords: go, gin, htmx, tailwind, postgresql, sqlc, slog, jwt, rate limiting, gzip, clean architecture, csp, hsts, csrf, cookies, samesite, refresh-token, sessions, versioning, home-page, members, git-flow, testing, test-database, docker, compose, fly, sops, age, secrets
 
 = MyWebApp template
 
 {author_name}
-v0.8.1, October 5th, 2026
+v0.8.3, October 7th, 2026
 
 '''
 
@@ -45,7 +45,9 @@ authenticated user, and an **admin-only user-management surface** for
 creating and modifying accounts. The binary reports its own build
 metadata (version, commit, branch, build date) at runtime. A separate
 **test database environment** runs every DB-dependent test against an
-isolated PostgreSQL instance.
+isolated PostgreSQL instance. A **Docker/Compose setup** runs the
+container locally against a host PostgreSQL, and a **Fly.io deployment**
+runs the same image in production with SOPS-encrypted secrets.
 
 [[fig-sequence]]
 .Login and admin-list sequence
@@ -63,7 +65,10 @@ image::docs/images/webapp_sequence_login.svg[Data-flow diagram,align="center",wi
 * **log/slog** — Structured logging (JSON or text)
 * **JWT** (`golang-jwt/jwt/v5`) — Access and refresh tokens with server-side revocation
 * **bcrypt** (`golang.org/x/crypto`) — Password hashing
+* **SOPS + age** — Encrypted secrets file, decrypted at boot by `internal/credentials`
 * **Cloudflare R2** (optional) — Private welcome image via presigned URLs
+* **Docker / Docker Compose** — Local containerised runs
+* **Fly.io** — Production deployment with Fly Secrets
 * **Air** — Live reload for development
 
 <<<
@@ -80,10 +85,30 @@ The application follows a clean architecture pattern:
 * **Middleware Layer** (`internal/middleware/`) — Request ID, access log, gzip, rate limiting, security headers, CSRF, role check
 * **Logging Layer** (`internal/logging/`) — Process-wide `slog` configuration
 * **Auth Layer** (`internal/auth/`) — JWT issuance/validation, password hashing
+* **Credentials Layer** (`internal/credentials/`) — Loads SOPS-encrypted secrets into the environment at boot
 * **Version Layer** (`internal/version/`) — Build-time metadata injected by the linker
 * **Testutil Layer** (`internal/testutil/`) — Isolated test database harness
 * **Database Layer** (`pkg/db/`) — Pool configuration, transactions, `.env` loading
 * **Object Storage** (`pkg/r2/`) — Cloudflare R2 client for presigned URLs
+
+=== What's New in v0.8.3
+
+* **Docker and Docker Compose verified end-to-end** — the image builds
+  locally, connects to PostgreSQL, publishes port 8080, and `/health`
+  returns `{"status":"ok"}`.
+* **`compose.yaml` hardened** — prevents registry pulls, uses the working
+  bridge network, preserves `host.docker.internal`, and uses a
+  GET-compatible healthcheck.
+* **`.env.docker.local`** now sets `PORT=8080`, and is gitignored
+  alongside the other Docker env files.
+* **SOPS + age secret loading** — `internal/credentials` decrypts
+  `secrets.enc.yaml` at boot using `AGE_KEY`, and exports each known
+  secret into the process environment. See
+  link:docs/age_sops_fly_howto.adoc[the age/SOPS/Fly how-to].
+* **Dockerfile, `fly.toml`, and logging updated** for the container
+  workflow.
+* **New doc:**
+  link:docs/webapp_in_prod_with_docker_and_fly.adoc[Running in Production with Docker and Fly.io].
 
 === What's New in v0.8.1
 
@@ -93,78 +118,52 @@ The application follows a clean architecture pattern:
   which an attacker plants a valid-looking cookie.
 * **Bearer exemption tightened** — `CSRFMiddleware` skips validation
   only when `AuthMiddleware` has explicitly marked the request as
-  Bearer-authenticated. A request that merely carries an
-  `Authorization` header is no longer exempt.
+  Bearer-authenticated.
 * **API paths accept only Bearer tokens** — cookie authentication is
-  refused on `/api/*`. The API group has no CSRF middleware, so
-  accepting cookies there would expose the JSON endpoints to CSRF.
+  refused on `/api/*`.
 * **Bearer token endpoint** — `POST /api/v1/auth/token` exchanges
-  credentials for a Bearer access token, giving API clients a
-  supported way to authenticate.
-* **Silent refresh reloads the user** — the middleware now reads the
-  current role and `is_active` flag from the database on every
-  refresh, instead of trusting the stale claims in the refresh token.
+  credentials for a Bearer access token.
+* **Silent refresh reloads the user** — the middleware reads the
+  current role and `is_active` flag from the database on every refresh.
 * **Logout revokes the correct session** — `Logout` parses the refresh
-  cookie to obtain the `jti` before revoking. The previous
-  implementation called `Revoke` with an empty `jti`, which was a
-  no-op.
-* **Rate limiter hardening** — keying now uses Gin's `ClientIP()`, which
-  honours the trusted-proxy configuration; IPv6 is keyed by `/64`; the
-  per-limiter map is capped and falls back to a shared bucket when
-  full; `Retry-After` reflects the limiter's actual rate; a `Stop`
-  method prevents the cleanup goroutine from leaking.
+  cookie to obtain the `jti` before revoking.
+* **Rate limiter hardening** — keying uses Gin's `ClientIP()`; IPv6 is
+  keyed by `/64`; the per-limiter map is capped with a fallback bucket;
+  `Retry-After` reflects the actual rate; a `Stop` method prevents the
+  cleanup goroutine from leaking.
 
 === What's New in v0.8.0
 
-* **Isolated test database environment** — `internal/testutil`
-  provides a per-binary test harness that resets the schema, applies
-  migrations in-process, and seeds the demo users. Tests read
-  `TEST_DB_*` environment variables and never touch the production
-  database; `db.IsTestConfig` refuses to run if the two names
-  coincide.
-* **Expanded test coverage** — source-only coverage rose from 20.5%
-  to 42.3%. The packages at or above the target are
-  `internal/auth` (78%), `internal/handler` (62%),
-  `internal/middleware` (88%), `internal/service` (60%), and
-  `internal/version` (66%).
+* **Isolated test database environment** — `internal/testutil` provides
+  a per-binary test harness that resets the schema, applies migrations
+  in-process, and seeds the demo users.
+* **Expanded test coverage** — source-only coverage rose from 20.5% to
+  42.3%.
 * **Bug fixes caught by the new tests** — `UserService.DeleteUser`
-  now returns `ErrUserNotFound` for a nonexistent user instead of
-  silently succeeding; the gzip middleware no longer advertises
-  compression on 204 responses.
+  returns `ErrUserNotFound` for a nonexistent user; gzip no longer
+  advertises compression on 204 responses.
 
 === What's New in v0.7.1
 
 * **Build-time version metadata** — `internal/version` carries the
   semantic version, git commit, branch, build date, and dirty flag,
-  injected by `-ldflags -X` at build time. A new public
-  `GET /version` endpoint reports the same information as JSON.
+  injected by `-ldflags -X`. A public `GET /version` endpoint reports
+  the same information as JSON.
 * **Release build tooling** — `scripts/build.sh` compiles with the
-  correct `-ldflags` and `-trimpath` flags. The `make build` target
-  uses the same flags and prints the metadata before compiling.
-* **Documentation** — this README and
-  `docs/security_headers_cookies_csrf_jwtscheme.adoc` updated for the
-  v0.7.1 public home page, member directory, and version endpoint.
+  correct `-ldflags` and `-trimpath` flags.
 * **Stats endpoint available to all roles** — `/web/users/stats` moved
-  out of the admin-only group so the Home page can display member
-  counts to every authenticated user, not only admins.
+  out of the admin-only group.
 
 === What's New in v0.7.0
 
 * **Public home page** — `/` and `/web/home` are served to anonymous
-  visitors and authenticated users alike. The page renders a public
-  hero for visitors and a personalised one for signed-in users, using
-  `OptionalAuthMiddleware` so no redirect occurs for anonymous callers.
+  visitors and authenticated users alike.
 * **Read-only member directory** — `/web/members` lists registered
-  users (all roles: user, moderator, admin) to every authenticated
-  caller. Mutation stays admin-only under `/web/users`.
-* **Unified post-login redirect** — every authenticated role now lands
-  on `/web/home` after login or registration. The previous
-  role-dependent redirect (admin → `/web/users`, others → `/web/me`)
-  has been removed.
-* **Cache-Control hardening** — `abortUnauthenticated` now emits
-  `Cache-Control: no-store` on every 401 and login redirect, so
-  browsers cannot heuristically cache a redirect that survives a
-  redeploy.
+  users to every authenticated caller.
+* **Unified post-login redirect** — every authenticated role lands on
+  `/web/home` after login or registration.
+* **Cache-Control hardening** — `abortUnauthenticated` emits
+  `Cache-Control: no-store` on every 401 and login redirect.
 
 === What's New in v0.6.x
 
@@ -194,6 +193,10 @@ The application follows a clean architecture pattern:
 * Node.js 18+ (for Tailwind CSS build)
 * Make (optional but recommended)
 * Git
+* Docker and Docker Compose (optional, for containerised runs)
+* `age` and `sops` (for encrypted secrets — see
+  link:docs/age_sops_fly_howto.adoc[the age/SOPS/Fly how-to])
+* `flyctl` (optional, for Fly.io deployment)
 
 === Install Development Tools
 
@@ -248,9 +251,6 @@ DB_STATEMENT_TIMEOUT=30s
 # Tests run against a separate database, never against DB_NAME above.
 # TEST_DB_NAME must not equal DB_NAME. If it is empty or matches,
 # every DB-dependent test skips with a clear message.
-#
-# The test database is created and migrated automatically on the first
-# `make test`.
 TEST_DB_HOST=localhost
 TEST_DB_PORT=5432
 TEST_DB_USER=postgres
@@ -264,14 +264,11 @@ TEST_DB_MIN_CONNS=1
 TEST_DB_CONNECT_TIMEOUT=5s
 TEST_DB_STATEMENT_TIMEOUT=30s
 
-# Auth — ALWAYS override in production
+# Auth — ALWAYS override in production (or load from secrets.enc.yaml)
 JWT_SECRET=change-me-in-production-please
 
 # JWT token TTLs
-# Access: short (the credential presented on every request)
 JWT_ACCESS_TTL=15m
-# Refresh: long (keeps the user logged in across browser sessions)
-# Capped at 720h (30 days) by the parser.
 JWT_REFRESH_TTL=168h
 
 # Logging
@@ -279,31 +276,27 @@ LOG_FORMAT=json
 LOG_LEVEL=info
 
 # Security headers
-CSP_REPORT_ONLY=true       # set to false in production, after a clean browser check
-CSP_REPORT_URI=            # optional endpoint for violation reports
-HSTS_MAX_AGE=0             # set to 31536000 ONLY after HTTPS is verified
+CSP_REPORT_ONLY=true
+CSP_REPORT_URI=
+HSTS_MAX_AGE=0
 HSTS_INCLUDE_SUBDOMAINS=false
 HSTS_PRELOAD=false
 X_FRAME_OPTIONS=DENY
 REFERRER_POLICY=strict-origin-when-cross-origin
-PERMISSIONS_POLICY=        # empty = middleware's built-in default
+PERMISSIONS_POLICY=
 COOP=same-origin
 CORP=same-origin
 
 # Secure cookies
-COOKIE_SECURE=false        # set to true in production, ONLY over HTTPS
+COOKIE_SECURE=false
 COOKIE_SAMESITE=lax
-COOKIE_DOMAIN=             # empty = host-only (correct for localhost)
+COOKIE_DOMAIN=
 
-# CSRF (defaults shown; override only if you have a reason)
+# CSRF
 CSRF_FORM_FIELD=csrf_token
 CSRF_HEADER_NAME=X-CSRF-Token
 CSRF_TOKEN_LENGTH=32
 CSRF_COOKIE_MAX_AGE=0
-# CSRF_SECRET signs the CSRF token. Required in a cluster so all nodes
-# can verify tokens issued by any of them. If unset, a random
-# per-process key is generated (fine for single-instance deployments,
-# but a restart invalidates outstanding tokens).
 CSRF_SECRET=
 
 # Cloudflare R2 (optional — leave all four empty to disable the welcome image)
@@ -316,22 +309,22 @@ R2_IMAGE_KEY=welcome.jpg
 
 WARNING: For local HTTP development, `COOKIE_SECURE=false` is mandatory.
 If left at the `true` default while running over plain HTTP, the browser
-accepts the cookie on login but silently refuses to send it back — you
-will appear logged in for one response and then logged out.
-
-The test database is created and migrated by the test suite itself, on
-the first `make test` of a fresh clone. `internal/testutil` resets the
-schema, runs the migrations in-process, and seeds the demo users.
-`db.IsTestConfig` refuses to run if `TEST_DB_NAME` equals `DB_NAME` or
-does not look like a test database, so the suite cannot accidentally
-wipe production.
+accepts the cookie on login but silently refuses to send it back.
 
 <<<
 
 === Secrets Management in Dev and in Prod
 
+Secrets (`JWT_SECRET`, `CSRF_SECRET`, `DB_PASSWORD`,
+`TEST_DB_PASSWORD`, R2 credentials) are stored in a SOPS-encrypted
+`secrets.enc.yaml` and loaded at boot by `internal/credentials` using
+the `AGE_KEY` environment variable. In development, `AGE_KEY` is unset
+and the loader falls back to `~/.config/sops/age/keys.txt`; in
+containers and on Fly.io, it is supplied as a secret.
+
 See link:docs/age_sops_fly_howto.adoc[the age/SOPS/Fly how-to] for
-secret management.
+installation, key generation, editing the encrypted file, rotation, and
+troubleshooting.
 
 <<<
 
@@ -393,9 +386,6 @@ This inserts five bcrypt-hashed demo users. The primary demo login is:
 make generate
 ----
 
-Regenerates `internal/repository/` from `sqlc/queries.sql` and
-`sqlc/queries_sessions.sql`.
-
 === 7. Build Tailwind CSS
 
 [source,bash]
@@ -414,8 +404,6 @@ make run
 make dev
 ----
 
-<<<
-
 === Quick Start (All-in-One)
 
 [source,bash]
@@ -423,14 +411,128 @@ make dev
 make setup && make seed && make dev
 ----
 
-This will:
+<<<
 
-. Install all dependencies
-. Generate SQLC code
-. Run migrations
-. Build Tailwind CSS
-. Seed demo users
-. Start the application with live reload
+== Running with Docker and Docker Compose
+
+The container image is self-contained. The two most common runtime
+failures are a missing `AGE_KEY` and a `DB_HOST` set to `localhost`.
+Full details are in
+link:docs/webapp_in_prod_with_docker_and_fly.adoc[Running in Production with Docker and Fly.io].
+
+=== Supplying `AGE_KEY` at container start
+
+[source,bash]
+----
+docker run --rm \
+  -e AGE_KEY="$(grep -v '^#' ~/.config/sops/age/keys.txt)" \
+  -e DB_HOST=host.docker.internal \
+  -e DB_PORT=5432 \
+  -e DB_USER=pmjtoca \
+  -e DB_NAME=MyWebApp \
+  -e DB_SSLMODE=disable \
+  --add-host host.docker.internal:host-gateway \
+  -p 8080:8080 \
+  mywebapp:debug
+----
+
+=== Using an untracked env file (recommended)
+
+Create `.env.docker.local` with the runtime values:
+
+[source,.env.docker.local]
+----
+AGE_KEY=AGE-SECRET-KEY-...
+DB_HOST=host.docker.internal
+DB_PORT=5432
+DB_USER=pmjtoca
+DB_NAME=MyWebApp
+DB_SSLMODE=disable
+PORT=8080
+----
+
+Then:
+
+[source,bash]
+----
+docker run --rm \
+  --env-file .env.docker.local \
+  --add-host host.docker.internal:host-gateway \
+  -p 8080:8080 \
+  mywebapp:debug
+----
+
+=== Docker Compose
+
+The repository ships with a `compose.yaml` that:
+
+* builds the image locally (no registry pull),
+* uses a working bridge network,
+* preserves `host.docker.internal:host-gateway`,
+* uses a GET-compatible healthcheck,
+* reads `.env.docker.local`.
+
+[source,yaml]
+----
+services:
+  app:
+    build: .
+    ports:
+      - "8080:8080"
+    env_file:
+      - .env.docker.local
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+----
+
+Run:
+
+[source,bash]
+----
+docker compose up --pull always
+----
+
+Verify:
+
+[source,bash]
+----
+curl -s http://localhost:8080/health
+# {"status":"ok", ...}
+----
+
+=== `DB_HOST` reference
+
+[cols="1,2",options="header"]
+|===
+| Where PostgreSQL runs | Value for `DB_HOST`
+
+| On the host machine
+| `host.docker.internal`
+
+| In Docker Compose
+| The database service name, for example `db`
+
+| On Fly.io
+| The private or managed database hostname
+
+| Anywhere else
+| Its reachable DNS name or IP address
+|===
+
+<<<
+
+== Running on Fly.io
+
+[source,bash]
+----
+fly secrets set AGE_KEY="$(grep -v '^#' ~/.config/sops/age/keys.txt)"
+fly deploy
+----
+
+`AGE_KEY` is the only Fly Secret that needs to be set. Everything else
+lives in `secrets.enc.yaml`, which is decrypted at boot. Fly injects
+the secret into the running machine at start time, so it never appears
+in the image or in a repository.
 
 <<<
 
@@ -448,40 +550,27 @@ make test-coverage         # HTML report over every package
 make test-coverage-src     # report excluding generated/wiring packages
 ----
 
-`make test` runs every package in sequence (`-p 1`) so that the
-shared test database is not accessed by two packages at once.
-
 === How the test database works
 
-`internal/testutil` is the harness. Its `Setup()` function, called
-from each DB-dependent package's `TestMain`, does four things:
+`internal/testutil` is the harness. Its `Setup()` function, called from
+each DB-dependent package's `TestMain`, does four things:
 
 . Opens a pool to the database named by `TEST_DB_*`.
 . Resets the schema (`DROP SCHEMA public CASCADE; CREATE SCHEMA public`).
-. Runs the migrations in-process, using the same migration files
-  that `make migrate-up` applies to production.
-. Seeds the demo users so tests can rely on `alice@example.com`
-  existing with a known password.
-
-The pool is shared across all tests in a package and closed once,
-after the last test runs. Individual tests must not close it.
+. Runs the migrations in-process.
+. Seeds the demo users.
 
 === Safety guards
 
-Three properties prevent the tests from touching production:
-
-* `TEST_DB_*` are separate variables from `DB_*`. A mistake in one
-  cannot affect the other.
+* `TEST_DB_*` are separate variables from `DB_*`.
 * `db.IsTestConfig` refuses to run if `TEST_DB_NAME` equals `DB_NAME`.
-* If `TEST_DB_NAME` is empty or does not contain `test`, `ci`,
-  `tmp`, or `scratch`, `LoadTestConfig` returns `(nil, false)` and
-  every DB-dependent test skips with a clear message.
+* If `TEST_DB_NAME` is empty or does not contain `test`, `ci`, `tmp`,
+  or `scratch`, `LoadTestConfig` returns `(nil, false)` and every
+  DB-dependent test skips.
 
 === Test coverage
 
-Source-only coverage (excluding `cmd`, `scripts`, `domain`,
-`repository`, `logging`, and `testutil`) is approximately 58%. The
-per-package figures:
+Source-only coverage is approximately 58%. The per-package figures:
 
 [cols="2,1",options="header"]
 |===
@@ -495,39 +584,23 @@ per-package figures:
 | `internal/web` | ~70%
 |===
 
-To see the exact numbers on your machine:
-
-[source,bash]
-----
-make test-coverage-src
-----
-
-That target writes `coverage-src.html` and prints the total to the
-terminal. Open the HTML file in a browser to see which lines are
-covered and which are not.
-
 <<<
 
 == Configuration Reference
 
 === Logging
 
-Logging is configured entirely through environment variables. Two
-formats are supported:
-
 [cols="1,2,1"]
 |===
 | Variable | Values | Description
-| `LOG_FORMAT` | `text` \| `json` | Output format. Default: `text` when stderr is a TTY, `json` when redirected (good for production log shippers).
-| `LOG_LEVEL` | `debug` \| `info` \| `warn` \| `error` | Minimum level. `debug` also enables source location (`AddSource`).
+| `LOG_FORMAT` | `text` \| `json` | Output format.
+| `LOG_LEVEL` | `debug` \| `info` \| `warn` \| `error` | Minimum level.
 |===
 
 Logs are written to `logs/app.log`. When running in an interactive
 terminal, they are also mirrored to stderr.
 
-==== Structured Log Fields
-
-Every HTTP request produces one access log line with:
+=== Structured Log Fields
 
 [source,json]
 ----
@@ -545,18 +618,12 @@ Every HTTP request produces one access log line with:
 }
 ----
 
-<<<
-
 ==== Request Correlation
 
-Every request is assigned a `request_id` (or honours an inbound
-`X-Request-ID` header). The ID is:
-
-* Returned to the client as the `X-Request-ID` response header.
-* Attached to the request-scoped `*slog.Logger`.
-* Included on every line emitted through `middleware.LoggerFromGin(c)`.
-
-Example — find every log line for one request:
+Every request is assigned a `request_id`. The ID is returned as the
+`X-Request-ID` response header, attached to the request-scoped
+`*slog.Logger`, and included on every line emitted through
+`middleware.LoggerFromGin(c)`.
 
 [source,bash]
 ----
@@ -573,43 +640,23 @@ Three token-bucket limiters run by default:
 |===
 | Scope | Rate | Burst | TTL
 | Global (all routes) | 20 req/s | 40 | 10 min
-| Auth routes (`/web/login`, `/web/register`, `/api/v1/auth/token`) | 5 req/min | 5 | 15 min
+| Auth routes | 5 req/min | 5 | 15 min
 | Refresh route (`/web/refresh`) | 1 req/s | 30 | 15 min
 |===
 
 Buckets are keyed by the client IP returned from Gin's `ClientIP()`,
-which honours the trusted-proxy configuration set on the engine
-(`router.SetTrustedProxies`). The application sets this at startup
-based on the deployment's network topology. Without a trusted-proxy
-declaration, Gin trusts every proxy and `ClientIP()` returns the
-left-most `X-Forwarded-For` entry — an attacker-controlled value. The
-trusted-proxy call is therefore not optional.
-
-IPv6 addresses are keyed by `/64` prefix. Each limiter caps the number
-of tracked keys; when the cap is reached, new keys share a fallback
-bucket so a flood of unique keys cannot exhaust memory. Idle buckets
-are garbage-collected after the TTL. Exceeded requests receive
-`429 Too Many Requests` with an accurate `Retry-After` and a body
-appropriate for the caller: JSON for HTMX and API requests, an HTML
-fragment for browser navigation.
+which honours the trusted-proxy configuration set on the engine.
 
 === Gzip Compression
 
-The gzip middleware:
-
-* Only compresses when `Accept-Encoding: gzip` is present.
-* Skips WebSocket / SSE upgrades.
-* Skips already-compressed types (`image/`, `video/`, `application/zip`,
-  `font/woff2`, etc.).
-* Sets `Vary: Accept-Encoding` for correct caching.
-* Removes `Content-Length` since the body is now chunked.
-
-<<<
+The gzip middleware only compresses when `Accept-Encoding: gzip` is
+present, skips WebSocket/SSE upgrades, skips already-compressed types,
+sets `Vary: Accept-Encoding`, and removes `Content-Length`.
 
 === HTTP Security Headers
 
 The `SecurityHeaders` middleware sets defence-in-depth headers on every
-response. Full rationale and rollout plan in
+response. Full rationale in
 `docs/security_headers_cookies_csrf_jwtscheme.adoc`.
 
 [cols="2,2"]
@@ -626,12 +673,7 @@ response. Full rationale and rollout plan in
 | `Cross-Origin-Resource-Policy` | `same-origin`
 |===
 
-<<<
-
 === Secure Cookies
-
-Three cookies are set, all with `Secure` (gated on `COOKIE_SECURE`),
-`SameSite=Lax`, and `Path=/`.
 
 [cols="1,1,2"]
 |===
@@ -646,90 +688,37 @@ Three cookies are set, all with `Secure` (gated on `COOKIE_SECURE`),
 
 Every mutating request (`POST`, `PUT`, `PATCH`, `DELETE`) carries a CSRF
 token that the server compares against the `csrf_token` cookie using a
-constant-time comparison. In addition, the cookie value carries an
-HMAC signature; the middleware rejects any cookie whose signature does
-not verify under the server's `CSRF_SECRET`. On failure, the request is
-rejected with `403` before the handler runs.
-
-Two paths carry the token:
-
-* **Native forms** (login, register, user create/edit) embed it as
-  `<input type="hidden" name="csrf_token">`.
-* **HTMX requests** get it injected as the `X-CSRF-Token` header by an
-  `htmx:configRequest` listener in `base.html`. No per-element handling
-  is required; adding a new `hx-delete` button is automatically
-  protected.
-
-The CSRF token is rotated on login and register, alongside the JWT
-cookies.
-
-Bearer-authenticated requests are exempt from CSRF validation. The
-exemption applies only when `AuthMiddleware` has validated the token
-and set the marker in the context; a request that merely carries an
-`Authorization` header is treated like any other request.
-
-<<<
+constant-time comparison. The cookie value also carries an HMAC
+signature; the middleware rejects any cookie whose signature does not
+verify under `CSRF_SECRET`.
 
 === Authentication
 
 The application uses a **two-token JWT scheme**:
 
 * **Access token** — short-lived (15 min default), presented on every
-  request. Stateless; not checked against any server-side store.
+  request. Stateless.
 * **Refresh token** — long-lived (7 days default), carries a `jti`
-  claim recorded in the `sessions` table. Exchanged for a fresh access
-  token by the middleware when the access token expires.
+  claim recorded in the `sessions` table.
 
-**Two transports** are supported:
-
-* **Cookie** (`auth_token`, `refresh_token`) — used by browser and
-  HTMX requests.
-* **Authorization: Bearer `<access-token>`** — used by API clients.
-  Bearer requests are exempt from CSRF and are not eligible for silent
-  refresh.
-
-Bearer tokens are issued by `POST /api/v1/auth/token`, which accepts
-a JSON body with `email` and `password` and returns a short-lived
-access token. Cookie authentication is not accepted on `/api/*`: the
-API group has no CSRF middleware, so accepting cookies there would
-expose the JSON endpoints to CSRF.
-
-Middleware behaviour on unauthenticated requests:
-
-[cols="1,2"]
-|===
-| Client | Response
-| HTMX | `401` + `HX-Redirect: /web/login`
-| API (`/api/*`) | `401` JSON `{"error":"unauthorized"}`
-| Browser | `302` to `/web/login`
-|===
+Two transports: **Cookie** (`auth_token`, `refresh_token`) for browser
+and HTMX requests; **Authorization: Bearer `<access-token>`** for API
+clients. Bearer requests are exempt from CSRF and are not eligible for
+silent refresh. Bearer tokens are issued by `POST /api/v1/auth/token`.
 
 ==== Silent Refresh
 
 When a request arrives with an expired `auth_token` but a valid,
 unrevoked `refresh_token`, the middleware reloads the user from the
-database, mints a fresh access token carrying the user's current role
-and activation status, sets it as a new `auth_token` cookie, and lets
-the request proceed. The user notices nothing.
-
-A 15-minute access TTL combined with silent refresh means the practical
-session length is `JWT_REFRESH_TTL` (7 days), while the credential the
-browser holds at any moment is only valid for 15 minutes.
-
-Because the middleware reloads the user, a change made outside the
-application — a role edit via SQL, a deactivation — is reflected in
-the very next access token. It does not wait for the refresh TTL to
-expire.
+database, mints a fresh access token, sets it as a new `auth_token`
+cookie, and lets the request proceed.
 
 ==== Revocation
 
 Logout, role changes, and account deactivation all revoke the
 corresponding `sessions` row. A revoked refresh token cannot be
 exchanged for an access token, so the session ends within the
-access-token TTL. This is what makes logout and privilege changes
-effective server-side, which a stateless JWT alone cannot provide.
-
-<<<
+access-token TTL.
 
 === Authorization
 
@@ -754,54 +743,12 @@ into one of three categories:
   `/api/v1/users/*`
 |===
 
-The category is enforced by which middleware is registered on the route
-group, not by checks inside the handler. `RequireRole` reads the claims
-set by `AuthMiddleware` and aborts with `403` (JSON for HTMX/API, or a
-redirect to `/web/me` for browser navigation) when the role does not
-match. Only the admin-only group is registered with `RequireRole`; the
-public and authenticated groups are not.
-
 <<<
 
 == Versioning
 
 The binary reports its own build metadata through two channels: the
 startup log line and the public `GET /version` endpoint.
-
-=== Build-time injection
-
-`scripts/build.sh` (and the `build` target in the Makefile) resolves
-four values from git and injects them via `-ldflags -X`:
-
-[cols="1,2,3",options="header"]
-|===
-| Variable | Source | Example
-
-| `Version`
-| `git describe --tags --exact-match` if HEAD is a tag, else
-  `git describe --tags --always --dirty`
-| `v0.8.1`
-
-| `GitCommit`
-| `git rev-parse --short=12 HEAD`
-| `9d4e6e335a06`
-
-| `GitBranch`
-| `git rev-parse --abbrev-ref HEAD`
-| `main`
-
-| `BuildDate`
-| `date -u +%Y-%m-%dT%H:%M:%SZ`
-| `2026-10-05T12:34:56Z`
-|===
-
-A plain `go run .` or `go build` without `-ldflags` leaves these empty;
-`internal/version.Get()` then falls back to the VCS stamp that the Go
-toolchain embeds in every build taken from inside a git repository
-(available since Go 1.18). The commit hash, build time, and dirty flag
-are always present; only the semantic version and branch are missing.
-
-=== Runtime query
 
 [source,bash]
 ----
@@ -811,19 +758,15 @@ curl -s http://localhost:8080/version | jq .
 [source,json]
 ----
 {
-  "version": "v0.8.1",
+  "version": "v0.8.3",
   "commit": "9d4e6e335a06",
-  "branch": "main",
-  "state": "v0.8.1",
-  "built": "2026-10-05T12:34:56Z",
+  "branch": "develop",
+  "state": "v0.8.3",
+  "built": "2026-10-07T10:39:10Z",
   "go": "1.23.0",
   "modified": false
 }
 ----
-
-The endpoint is public and unauthenticated: it carries no user data and
-is used by operators, load balancers, and the release smoke test to
-identify which binary is running.
 
 === Release procedure
 
@@ -838,13 +781,13 @@ Then, from `develop`:
 
 [source,bash]
 ----
-git flow release start 0.8.1
+git flow release start 0.8.3
 # update the version lines in the AsciiDoc documents, add a
-# "What's New in v0.8.1" section, rebuild the PDFs, commit
-git flow release finish 0.8.1
+# "What's New in v0.8.3" section, rebuild the PDFs, commit
+git flow release finish 0.8.3
 git push origin main
 git push origin develop
-git push origin v0.8.1
+git push origin v0.8.3
 ----
 
 Do **not** run `git push --tags` — push the single release tag
@@ -861,10 +804,6 @@ explicitly so unrelated local tags are not published.
 make dev
 ----
 
-Runs Tailwind in watch mode in the background and the Go server under
-Air. Go files reload automatically; CSS rebuilds on template/style
-changes.
-
 === Database Changes
 
 ==== 1. Create a Migration
@@ -874,31 +813,7 @@ changes.
 make migrate-create name=add_user_avatar
 ----
 
-This creates two files in `migrations/`:
-
-* `XXXX_add_user_avatar.up.sql` — forward migration
-* `XXXX_add_user_avatar.down.sql` — rollback migration
-
-Fill the `.up.sql` file with the forward SQL and the `.down.sql` file
-with the rollback SQL. Do not add tool markers (`-- +goose Up`,
-`-- +migrate Up`, etc.); `golang-migrate` reads the direction from the
-filename suffix, not from the file contents.
-
-==== 2. Write the Migration
-
-[source,sql]
-----
--- migrations/XXXX_add_user_avatar.up.sql
-ALTER TABLE users ADD COLUMN avatar_url VARCHAR(500);
-----
-
-[source,sql]
-----
--- migrations/XXXX_add_user_avatar.down.sql
-ALTER TABLE users DROP COLUMN avatar_url;
-----
-
-==== 3. Apply / Rollback
+==== 2. Apply / Rollback
 
 [source,bash]
 ----
@@ -909,38 +824,15 @@ make db-reset        # full reset (drop, up, seed)
 
 ==== Troubleshooting a Dirty Migration
 
-If `migrate up` fails partway, the `schema_migrations` row is marked
-dirty and further migrations refuse to run. Recover:
-
 [source,bash]
 ----
-# Clear the dirty flag (and set the current version)
 migrate -path migrations -database "$DB_URL" force 0
-
-# Drop whatever the partial run left behind
-psql -d mywebapp -c "DROP TABLE IF EXISTS sessions CASCADE; DROP TABLE IF EXISTS users CASCADE;"
-
-# Reapply from scratch
-make migrate-up
-----
-
-Or, more simply, drop the whole schema and reapply:
-
-[source,bash]
-----
 psql -d mywebapp -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
 make migrate-up
 make seed
 ----
 
-<<<
-
 === Adding New Queries
-
-==== 1. Add SQL Queries
-
-Add queries to `sqlc/queries.sql` (or a new file in `sqlc/`, if
-`sqlc.yaml` lists it):
 
 [source,sql]
 ----
@@ -949,70 +841,16 @@ SELECT id, email, username, full_name, is_active, role, last_login, created_at, 
 FROM users
 WHERE email = $1 AND is_active = $2
 LIMIT 1;
-
--- name: CountUsersByRole :one
-SELECT COUNT(*) FROM users WHERE role = $1;
 ----
 
-<<<
-
-==== 2. Regenerate SQLC Code
+Then:
 
 [source,bash]
 ----
 make generate
 ----
 
-==== 3. Use the Generated Code
-
-[source,go]
-----
-user, err := s.queries.GetUserByEmailAndActive(ctx, "user@example.com", true)
-count, err := s.queries.CountUsersByRole(ctx, pgtype.Text{String: "admin", Valid: true})
-----
-
-<<<
-
 === Adding a New API Endpoint
-
-==== 1. Update Domain Models
-
-Add DTOs in `internal/domain/your_model.go`:
-
-[source,go]
-----
-type CreatePostRequest struct {
-    Title   string `json:"title" binding:"required"`
-    Content string `json:"content" binding:"required"`
-}
-
-type PostResponse struct {
-    ID        int32     `json:"id"`
-    Title     string    `json:"title"`
-    Content   string    `json:"content"`
-    CreatedAt time.Time `json:"created_at"`
-}
-----
-
-==== 2. Add Service Method
-
-[source,go]
-----
-func (s *PostService) CreatePost(ctx context.Context, req domain.CreatePostRequest) (*domain.Post, error) {
-    post, err := s.queries.CreatePost(ctx, repository.CreatePostParams{
-        Title:   req.Title,
-        Content: req.Content,
-    })
-    if err != nil {
-        return nil, fmt.Errorf("create post: %w", err)
-    }
-    return s.mapCreatePostRowToDomain(&post), nil
-}
-----
-
-==== 3. Add Handler
-
-Remember to pull the request-scoped logger for any error paths:
 
 [source,go]
 ----
@@ -1036,29 +874,7 @@ func (h *PostHandler) CreatePost(c *gin.Context) {
 }
 ----
 
-==== 4. Register Route
-
-[source,go]
-----
-api := router.Group("/api/v1",
-    authMW,
-    middleware.RequireRole("admin"),
-)
-{
-    posts := api.Group("/posts")
-    {
-        posts.POST("",  postHandler.CreatePost)
-        posts.GET("",   postHandler.ListPosts)
-        posts.GET("/:id", postHandler.GetPost)
-    }
-}
-----
-
-<<<
-
 === Adding a New HTMX Page
-
-==== 1. Add a Handler
 
 [source,go]
 ----
@@ -1082,32 +898,6 @@ func (h *WebHandler) ListPostsPage(c *gin.Context) {
 }
 ----
 
-NOTE: Pass `csrf_token` into the template data for any page that
-renders a mutating form. HTMX requests get the token injected
-automatically by the `htmx:configRequest` listener, but native form
-submissions need the hidden field.
-
-<<<
-
-==== 2. Add Templates
-
-Following the existing pattern:
-
-* `internal/templates/partials/post_list.html` — the HTMX partial
-* Optionally `internal/templates/partials/post_row.html` — one row
-
-==== 3. Register the Route
-
-[source,go]
-----
-webGroup := router.Group("/web",
-    authMW,
-    middleware.RequireRole("admin"),
-    middleware.CSRFMiddleware(csrfCfg),
-)
-webGroup.GET("/posts", webHandler.ListPostsPage)
-----
-
 <<<
 
 == Project Structure
@@ -1118,148 +908,59 @@ mywebapp/
 ├── bin/                            # Compiled binaries (gitignored)
 ├── cmd/
 │   └── api/
-│       └── main.go                 # Entry point, middleware wiring, session cleanup
+│       └── main.go                 # Entry point, middleware wiring
 ├── docs/
 │   ├── images/
-│   │   ├── webapp_dataflow_2.puml
-│   │   ├── webapp_dataflow_2.svg
-│   │   ├── webapp_sequence_login.svg
-│   │   └── scc_report_v0.8.1.svg
+│   ├── age_sops_fly_howto.adoc
 │   ├── security_headers_cookies_csrf_jwtscheme.adoc
-│   └── security_headers_cookies_csrf_jwtscheme.pdf
+│   └── webapp_in_prod_with_docker_and_fly.adoc
 ├── internal/
-│   ├── auth/
-│   │   ├── jwt.go                  # Access + refresh token generation and validation
-│   │   ├── jwt_test.go
-│   │   └── password.go             # bcrypt hashing
-│   ├── domain/
-│   │   ├── errors.go               # Domain-level sentinel errors
-│   │   └── user.go                 # Models and DTOs
-│   ├── handler/
-│   │   ├── user_handler.go         # JSON API handlers
-│   │   └── user_handler_test.go
-│   ├── logging/
-│   │   └── logging.go              # slog setup, Gin writer bridge
-│   ├── middleware/
-│   │   ├── accesslog.go
-│   │   ├── accesslog_test.go
-│   │   ├── csrf.go                 # Signed double-submit cookie pattern
-│   │   ├── csrf_test.go
-│   │   ├── gzip.go
-│   │   ├── gzip_test.go
-│   │   ├── nocache.go
-│   │   ├── nocache_test.go
-│   │   ├── ratelimit.go
-│   │   ├── ratelimit_test.go
-│   │   ├── requestid.go
-│   │   ├── requestid_test.go
-│   │   ├── require_role.go         # Role-based authorization middleware
-│   │   ├── require_role_test.go
-│   │   ├── security_headers.go
-│   │   └── security_headers_test.go
-│   ├── repository/                 # SQLC-generated code
-│   │   ├── db.go
-│   │   ├── errors.go
-│   │   ├── interface.go
-│   │   ├── models.go
-│   │   ├── querier.go
-│   │   ├── queries.sql.go
-│   │   └── queries_sessions.sql.go
-│   ├── service/
-│   │   ├── session_service.go
-│   │   ├── session_service_test.go
-│   │   ├── user_service.go
-│   │   └── user_service_test.go
-│   ├── templates/
-│   │   ├── base.html               # Admin users list shell
-│   │   ├── home.html               # Public landing page (auth-aware)
-│   │   ├── login.html
-│   │   ├── me.html                 # Self-service account page
-│   │   ├── members.html            # Member directory shell
-│   │   ├── register.html
-│   │   ├── test.html
-│   │   └── partials/
-│   │       ├── login_form.html
-│   │       ├── members_list.html   # Member directory HTMX fragment
-│   │       ├── members_row.html    # Member directory row (read-only)
-│   │       ├── register_form.html
-│   │       ├── user_form.html
-│   │       ├── user_list.html
-│   │       ├── user_list_by_id.html
-│   │       ├── user_role_form.html
-│   │       ├── user_row.html
-│   │       └── user_stats.html
-│   ├── testutil/
-│   │   ├── db.go                   # Test pool bootstrap and schema reset
-│   │   ├── migrate.go              # In-process migration runner
-│   │   ├── paths.go                # Repository-root resolver
-│   │   └── seed.go                 # Demo users for tests
-│   ├── version/
-│   │   └── version.go              # Build metadata via -ldflags -X
-│   └── web/
-│       ├── auth_handler.go         # Login / Register / Logout / Refresh / API token
-│       ├── auth_handler_test.go
-│       ├── auth_middleware.go      # JWT middleware + silent refresh
-│       ├── auth_middleware_test.go
-│       ├── cookies.go
-│       ├── cookies_test.go
-│       ├── health_handler.go       # /health and /version
-│       ├── helpers.go
-│       ├── helpers_test.go
-│       ├── home_handler.go         # /web/home, /web/members
-│       ├── home_handler_test.go
-│       ├── main_test.go            # Package-level TestMain
-│       ├── me_handler.go           # /web/me
-│       ├── me_handler_test.go
-│       ├── template_funcs.go
-│       ├── template_funcs_test.go
-│       ├── web_handler.go          # Admin HTMX page handlers
-│       └── web_handler_test.go
+│   ├── auth/                       # JWT + bcrypt
+│   ├── credentials/                # SOPS/age loader
+│   ├── domain/                     # Models, DTOs, errors
+│   ├── handler/                    # JSON API handlers
+│   ├── logging/                    # slog setup
+│   ├── middleware/                 # accesslog, csrf, gzip, ratelimit, requestid, require_role, security_headers
+│   ├── repository/                 # SQLC-generated
+│   ├── service/                    # business logic
+│   ├── templates/                  # HTMX templates + partials
+│   ├── testutil/                   # isolated test DB harness
+│   ├── version/                    # build metadata
+│   └── web/                        # HTMX handlers, cookies, auth
 ├── logs/
-│   └── app.log                     # Structured logs (gitignored)
+│   └── app.log                     # gitignored
 ├── migrations/
-│   ├── 20260906221500_create_users_table.up.sql
-│   ├── 20260906221500_create_users_table.down.sql
-│   ├── 20260922120000_create_sessions_table.up.sql
-│   └── 20260922120000_create_sessions_table.down.sql
 ├── pkg/
-│   ├── db/
-│   │   ├── db.go                   # Pool config, .env loading
-│   │   └── tx.go                   # WithTx helper
-│   └── r2/
-│       └── client.go               # Cloudflare R2 presigned URLs
+│   ├── db/                         # pool config, tx helper
+│   └── r2/                         # Cloudflare R2 presigned URLs
 ├── scripts/
-│   ├── build.sh                    # Release build with -ldflags -X
-│   └── seed.go                     # Demo data seeding
+│   ├── build.sh
+│   └── seed.go
 ├── sqlc/
-│   ├── queries.sql
-│   ├── queries_sessions.sql
-│   ├── sqlc.yaml
-│   └── sqlc.yml -> sqlc.yaml
 ├── static/
-│   ├── css/
-│   │   ├── output.css              # Tailwind build output
-│   │   └── tailwind.css
-│   └── js/
-│       └── htmx.min.js
-├── .env                            # Environment (gitignored)
-├── .air.toml                       # Air configuration
+├── .env                            # gitignored
+├── .env.docker.local               # gitignored
+├── .air.toml
 ├── .gitignore
-├── Makefile                        # Build automation
+├── compose.yaml                    # Docker Compose
+├── Dockerfile
+├── fly.toml
+├── Makefile
 ├── go.mod
 ├── go.sum
 ├── package.json
 ├── tailwind.config.js
+├── secrets.enc.yaml                # SOPS-encrypted secrets
 └── README.adoc                     # This file
 ----
 
 <<<
 
-== Project inventory for v0.8.1
+== Project inventory for v0.8.3
 
 [[fig-scc-report]]
-.Source code statistics for MyWebApp v0.8.1
-image::docs/images/scc_report_v0.8.2.svg[Source code statistics,align="center",width=100%]
+.Source code statistics for MyWebApp v0.8.3
+image::docs/images/scc_report_v0.8.3.svg[Source code statistics,align="center",width=100%]
 
 <<<
 
@@ -1272,12 +973,12 @@ image::docs/images/scc_report_v0.8.2.svg[Source code statistics,align="center",w
 | Command | Description
 | `make run` | Run the application in the foreground
 | `make start` | Build and start in the background (writes `.pid`)
-| `make stop` | Stop the background process (SIGTERM, then SIGKILL after 10s)
+| `make stop` | Stop the background process
 | `make restart` | Stop + start
 | `make status` | Show whether the app is running
 | `make logs` | Tail `logs/app.log`
 | `make dev` | Live reload (Air) + Tailwind watch
-| `make build` | Build Tailwind + production binary (with version metadata)
+| `make build` | Build Tailwind + production binary
 | `make build-css` | Build Tailwind CSS only
 | `make watch-css` | Tailwind in watch mode
 | `make version` | Print the version metadata that `make build` will inject
@@ -1328,7 +1029,7 @@ image::docs/images/scc_report_v0.8.2.svg[Source code statistics,align="center",w
 | `make test` | Run all tests (serialised; uses `TEST_DB_*`)
 | `make test-fast` | Run non-DB packages in parallel
 | `make test-coverage` | Raw HTML coverage over every package
-| `make test-coverage-src` | Source-only coverage, excludes wiring and generated packages
+| `make test-coverage-src` | Source-only coverage
 | `make fmt` | `go fmt` + CSS rebuild
 | `make lint` | `golangci-lint` (auto-installs if missing)
 |===
@@ -1354,7 +1055,7 @@ image::docs/images/scc_report_v0.8.2.svg[Source code statistics,align="center",w
 | `make all` | clean → install → generate → migrate-up → build-css → build
 | `make clean` | Remove binaries, `node_modules`, CSS output
 | `make check-env` | Print loaded environment
-| `make info` | Project metadata (includes version, commit, branch)
+| `make info` | Project metadata
 | `make dirs` | Create standard directory layout
 |===
 
@@ -1370,9 +1071,6 @@ image::docs/images/scc_report_v0.8.2.svg[Source code statistics,align="center",w
 | POST | `/api/v1/auth/token` | Exchange credentials for a Bearer access token
 |===
 
-The token endpoint is public and rate-limited. It returns
-`{"access_token": "...", "token_type": "Bearer", "expires_in": 900}`.
-
 === Users API
 
 [cols="1,2,1"]
@@ -1386,18 +1084,17 @@ The token endpoint is public and rate-limited. It returns
 | DELETE | `/api/v1/users/:id` | Delete user
 |===
 
-All Users API routes require authentication via
-`Authorization: Bearer <access-token>` and require `role=admin`.
-Cookie authentication is refused on `/api/*`.
+All Users API routes require `Authorization: Bearer <access-token>` and
+`role=admin`. Cookie authentication is refused on `/api/*`.
 
 === Web (HTMX) Routes
 
 [cols="1,2,1"]
 |===
 | Method | Endpoint | Description
-| GET | `/` | Public home page (no auth required)
+| GET | `/` | Public home page
 | GET | `/web/home` | Public home page (explicit URL)
-| GET | `/web/members` | Member directory (authenticated, any role)
+| GET | `/web/members` | Member directory (authenticated)
 | GET | `/web/members/partial` | Member directory HTMX fragment
 | GET | `/web/login` | Login page / form partial
 | POST | `/web/login` | Submit login
@@ -1405,7 +1102,7 @@ Cookie authentication is refused on `/api/*`.
 | POST | `/web/register` | Submit registration
 | POST | `/web/refresh` | Exchange refresh token for a new access token
 | POST | `/web/logout` | Revoke the session and clear all cookies
-| GET | `/web/me` | Self-service account page (any authenticated role)
+| GET | `/web/me` | Self-service account page
 | GET | `/web/users` | Users list (admin)
 | GET | `/web/users/by-id` | Users list by ID (admin)
 | GET | `/web/users/new` | New user form (admin)
@@ -1428,8 +1125,6 @@ Cookie authentication is refused on `/api/*`.
 | GET | `/test` | Template smoke test
 | GET | `/static/*` | Static assets
 |===
-
-<<<
 
 === Example Requests
 
@@ -1457,120 +1152,12 @@ Response:
 }
 ----
 
-==== Login (HTMX)
-
-[source,http]
-----
-POST /web/login HTTP/1.1
-Content-Type: application/x-www-form-urlencoded
-
-csrf_token=<token>&email=alice@example.com&password=password123
-----
-
-Response sets `auth_token`, `refresh_token`, and a rotated `csrf_token`,
-and returns `HX-Redirect: /web/home` for HTMX clients.
-
-==== Refresh (browser / HTMX)
-
-[source,http]
-----
-POST /web/refresh HTTP/1.1
-Cookie: refresh_token=<jwt>
-----
-
-Response is `204 No Content` with a new `Set-Cookie: auth_token=...`
-header. On failure (expired, revoked, or missing refresh token),
-returns `401` and clears both auth cookies.
-
-==== Logout (HTMX)
-
-[source,http]
-----
-POST /web/logout HTTP/1.1
-X-CSRF-Token: <token>
-Cookie: auth_token=<jwt>; refresh_token=<jwt>; csrf_token=<token>
-----
-
-Response revokes the session row, clears all three cookies, and returns
-`HX-Redirect: /web/login`.
-
-==== Create User (JSON API)
-
-[source,http]
-----
-POST /api/v1/users HTTP/1.1
-Content-Type: application/json
-Authorization: Bearer <access-token>
-
-{
-    "email": "john@example.com",
-    "password": "securepassword123",
-    "username": "johndoe",
-    "full_name": "John Doe"
-}
-----
-
-Response:
-
-[source,json]
-----
-{
-    "id": 6,
-    "email": "john@example.com",
-    "username": "johndoe",
-    "full_name": "John Doe",
-    "is_active": true,
-    "role": "user",
-    "created_at": "2026-10-05T12:34:56Z",
-    "updated_at": "2026-10-05T12:34:56Z"
-}
-----
-
-NOTE: The `role` field is not accepted on create or update. New users
-are always created with `role=user`. Role changes go through
-`PUT /api/v1/users/:id/role`.
-
-==== List Users (paginated)
-
-[source,http]
-----
-GET /api/v1/users?page=1&limit=10 HTTP/1.1
-Authorization: Bearer <access-token>
-----
-
-Response:
-
-[source,json]
-----
-{
-    "data": [
-        {
-            "id": 1,
-            "email": "alice@example.com",
-            "username": "alice",
-            "full_name": "Alice Johnson",
-            "is_active": true,
-            "role": "admin",
-            "created_at": "2026-09-06T22:15:00Z",
-            "updated_at": "2026-09-22T20:43:53Z"
-        }
-    ],
-    "pagination": {
-        "page": 1,
-        "limit": 10,
-        "total": 5
-    }
-}
-----
-
 ==== Health Check
 
 [source,http]
 ----
 GET /health HTTP/1.1
 ----
-
-Response:
 
 [source,json]
 ----
@@ -1598,16 +1185,14 @@ Response:
 GET /version HTTP/1.1
 ----
 
-Response:
-
 [source,json]
 ----
 {
-  "version": "v0.8.1",
+  "version": "v0.8.3",
   "commit": "9d4e6e335a06",
-  "branch": "main",
-  "state": "v0.8.1",
-  "built": "2026-10-05T12:34:56Z",
+  "branch": "develop",
+  "state": "v0.8.3",
+  "built": "2026-10-07T10:39:10Z",
   "go": "1.23.0",
   "modified": false
 }
@@ -1621,14 +1206,23 @@ Response:
 
 ==== Database Connection Failed
 
-Check `.env` and confirm PostgreSQL is running:
-
 [source,bash]
 ----
 pg_isready
 make check-env
 make db-check
 ----
+
+Inside a container, `localhost` refers to the container itself. Set
+`DB_HOST=host.docker.internal` (with
+`--add-host host.docker.internal:host-gateway` on Linux).
+
+==== Missing `AGE_KEY`
+
+The application fails fast when `AGE_KEY` is absent. Supply it at
+runtime via `--env-file`, `-e`, or a Fly Secret. Never bake it into the
+image or commit it. See
+link:docs/webapp_in_prod_with_docker_and_fly.adoc[the Docker/Fly doc].
 
 ==== SQLC Generation Fails
 
@@ -1639,22 +1233,15 @@ cd sqlc && sqlc generate
 make generate
 ----
 
-Verify no syntax errors in `sqlc/queries.sql` and that `sqlc.yaml`
-lists both `queries.sql` and `queries_sessions.sql`.
-
 ==== Migration Fails
 
 [source,bash]
 ----
-# Inspect current version
 migrate -path migrations -database "$DB_URL" version
-
-# Force a version if a partial migration left the schema inconsistent
 migrate -path migrations -database "$DB_URL" force <version>
 ----
 
-For a development database, dropping and recreating the schema is
-usually faster:
+For a development database:
 
 [source,bash]
 ----
@@ -1665,22 +1252,13 @@ make seed
 
 ==== `migrate: command not found`
 
-The `migrate` binary is installed by `go install` into
-`$(go env GOPATH)/bin`. If that directory is not on your `PATH`:
-
 [source,bash]
 ----
-# One-time, per shell
 export PATH="$HOME/go/bin:$PATH"
-
-# Or make it permanent
-echo 'export PATH="$HOME/go/bin:$PATH"' >> ~/.zshrc  # or ~/.bashrc
+echo 'export PATH="$HOME/go/bin:$PATH"' >> ~/.zshrc
 ----
 
 ==== `unknown driver postgres (forgotten import?)`
-
-The `migrate` binary was installed without the PostgreSQL driver.
-Reinstall with the build tag:
 
 [source,bash]
 ----
@@ -1688,9 +1266,6 @@ go install -tags 'postgres' github.com/golang-migrate/migrate/v4/cmd/migrate@lat
 ----
 
 ==== `no migration found for version 0`
-
-The `schema_migrations` table has a phantom version-0 row left by
-`migrate force 0`. Clear it:
 
 [source,bash]
 ----
@@ -1703,16 +1278,11 @@ make migrate-up
 [source,bash]
 ----
 make install
-# or:
-go install github.com/air-verse/air@latest
 ----
 
 ==== Rate Limited During Development
 
-If HTMX polling (`/web/users/stats`) trips the global limiter, either:
-
-* Reduce polling frequency in `base.html`.
-* Increase the global limiter in `cmd/api/main.go`:
+Increase the global limiter in `cmd/api/main.go`:
 
 [source,go]
 ----
@@ -1721,132 +1291,27 @@ globalLimiter := middleware.NewRateLimiter(60, 120, 10*time.Minute, 100_000)
 
 ==== Logged Out Immediately After Login
 
-Two causes:
-
-. `COOKIE_SECURE=true` while running over plain HTTP. The browser
-  accepts the cookie on the login response but refuses to send it back
-  on the next request. Fix: set `COOKIE_SECURE=false` in `.env` for
-  local dev.
-. The `auth_token` cookie's `Max-Age` is shorter than the time between
-  login and the next request. With the 15-minute default, this is
-  unlikely unless `JWT_ACCESS_TTL` was set to a very short value.
+Set `COOKIE_SECURE=false` in `.env` for local dev.
 
 ==== Chrome Serves a Stale Redirect for `/`
 
-If `http://localhost:8080/` redirects to `/web/login` in Chrome but
-not in Firefox, the browser has cached a `302` from an earlier build.
-The current server emits `Cache-Control: no-store` on that route, but a
-cached entry from before the current build can survive a redeploy.
-
-Clear it: DevTools → Application → Storage → **Clear site data**, or
-`chrome://settings/clearBrowserData` with *Cached images and files* +
-*Cookies and other site data*, *All time*.
-
-The `NoCache` middleware prevents recurrence for any response emitted
-through the middleware chain. `abortUnauthenticated` additionally sets
-`no-store` on 401s and login redirects so no intermediary can cache
-them.
-
-==== `IS_AUTHED = false` on `/web/home`
-
-If the Home page renders the anonymous variant while you are in fact
-signed in, the server did not see a valid access token when it
-rendered. Possible causes:
-
-. The access token has expired and `OptionalAuthMiddleware` does not
-  perform a silent refresh. The next protected request will refresh it;
-  a reload of `/web/home` after that will render authenticated.
-. `COOKIE_SECURE=true` on plain HTTP — the browser never stores the
-  auth cookie, so no token is present on any request.
-. The browser is serving a stale copy. Clear site data for `localhost`
-  and reload.
-
-You can confirm the server's view directly:
-
-[source,bash]
-----
-curl -s -b /tmp/cj.txt http://localhost:8080/web/home \
-  | grep -o 'const IS_AUTHED = [a-z]*'
-----
-
-`true` means the server rendered the authenticated variant; a browser
-still showing the anonymous variant is serving stale content.
-
-==== Silent Refresh Fails in One Browser but Not Another
-
-Check the browser console for errors on the `/web/refresh` request.
-The most common cause is a stale `refresh_token` cookie that was set
-with different attributes than the current request expects — clear all
-cookies for `localhost:8080` and log in again.
+Clear site data for `localhost` in DevTools → Application → Storage →
+**Clear site data**.
 
 ==== CSRF 403 on a Form Submission
 
-The form's hidden `csrf_token` field is empty, or doesn't match the
-cookie. Reload the page (which re-issues the cookie via the safe-method
-branch) and resubmit. If it recurs, verify that
-`middleware.CSRFMiddleware` is registered on the `GET` route that
-renders the form.
-
-If the `CSRF_SECRET` env var is not set and the process has just
-restarted, all outstanding tokens become invalid because the per-process
-key changed. Reload the page. In a cluster, set `CSRF_SECRET` to the
+Reload the page and resubmit. In a cluster, set `CSRF_SECRET` to the
 same value on every node.
 
 ==== DB-dependent tests skip
 
-Symptom:
-
-[source,text]
-----
-testutil: no test database configured; DB-dependent tests will skip
---- SKIP: TestCreateUser_AdminSucceeds
-----
-
-Cause: `TEST_DB_NAME` is empty, or the test database does not exist.
-
-Fix:
-
 [source,bash]
 ----
-# Confirm the configuration is loaded.
 make test-db-check
-
-# If TEST_DB_NAME is set but the database does not exist:
 make test-db-create
 ----
 
-==== Test database unreachable
-
-Symptom:
-
-[source,text]
-----
-testutil: test database unreachable: ... password authentication failed for user "pmjtoca"
-----
-
-Cause: `TEST_DB_PASSWORD` in `.env` does not match the current password
-for the `TEST_DB_USER` role, or the role does not exist.
-
-Fix: update `TEST_DB_PASSWORD` in `.env`, or create the role. If the
-project uses SCRAM authentication (see the security document), the
-password is enforced and must be correct.
-
 ==== `multiple definitions of TestMain`
-
-Symptom:
-
-[source,text]
-----
-# mywebapp/internal/web
-multiple definitions of TestMain
-FAIL    mywebapp/internal/web [setup failed]
-----
-
-Cause: two files in the same test package define `TestMain`. Go allows
-exactly one.
-
-Fix: keep the definition in `main_test.go` and remove any other. Search
-with:
 
 [source,bash]
 ----
@@ -1856,8 +1321,6 @@ grep -rn 'func TestMain' internal/
 Only one match per package is correct.
 
 ==== Logs Are JSON When I Want Text
-
-Set explicitly in `.env`:
 
 [source,.env]
 ----
@@ -1870,8 +1333,6 @@ LOG_FORMAT=text
 ----
 LOG_LEVEL=debug
 ----
-
-Debug mode also includes `source` (file:line) on every line.
 
 === Getting Help
 
@@ -1893,6 +1354,10 @@ psql -d mywebapp -c "SELECT jti, user_id, issued_at, expires_at, revoked_at FROM
 ** https://github.com/air-verse/air
 ** https://pkg.go.dev/log/slog
 ** https://github.com/golang-jwt/jwt
+** https://getsops.io/
+** https://age-encryption.org/
+
+<<<
 
 == Contributing
 
@@ -1910,19 +1375,19 @@ psql -d mywebapp -c "SELECT jti, user_id, issued_at, expires_at, revoked_at FROM
 * New SQL goes in `sqlc/queries.sql` or `sqlc/queries_sessions.sql`;
   never hand-edit `internal/repository/*.go`.
 * New HTMX pages should expose a partial template and use a stable
-  container id (e.g. `#user-list`, `#member-list`).
+  container id.
 * Pass `csrf_token` into template data for any page rendering a
   mutating form.
-* Mutating HTMX requests get `X-CSRF-Token` injected automatically — no
-  per-element handling needed.
+* Mutating HTMX requests get `X-CSRF-Token` injected automatically.
 * The root route `/` and `/web/home` are public. Any new protected
   route belongs behind `authMW`, and any admin-only route behind
   `RequireRole("admin")`.
 * The public Home page uses `OptionalAuthMiddleware`. Do not swap in
-  `authMW` on that route — it would break anonymous access.
+  `authMW` on that route.
 * New DB-dependent tests should call `testutil.NewPool(t)`, never
-  `db.LoadConfig()` or `db.NewPool()`. The production database must
-  not be reachable from the test code path.
+  `db.LoadConfig()` or `db.NewPool()`.
+* Secrets belong in `secrets.enc.yaml`, never in `.env`, `fly.toml`,
+  or a committed env file.
 
 == License
 
