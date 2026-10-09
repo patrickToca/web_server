@@ -34,7 +34,7 @@ func (g *gzipWriter) WriteHeader(code int) {
 func (g *gzipWriter) Write(data []byte) (int, error) {
 	if !g.wrote {
 		g.wrote = true
-		h := g.ResponseWriter.Header()
+		h := g.Header()
 		h.Set("Content-Encoding", "gzip")
 		h.Del("Content-Length")
 	}
@@ -44,7 +44,7 @@ func (g *gzipWriter) Write(data []byte) (int, error) {
 func (g *gzipWriter) WriteString(s string) (int, error) {
 	if !g.wrote {
 		g.wrote = true
-		h := g.ResponseWriter.Header()
+		h := g.Header()
 		h.Set("Content-Encoding", "gzip")
 		h.Del("Content-Length")
 	}

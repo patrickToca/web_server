@@ -221,7 +221,7 @@ func (s *JWTService) validate(tokenString string, expected TokenType) (*Claims, 
 	if !token.Valid {
 		return nil, ErrInvalidToken
 	}
-	if claims.ExpiresAt != nil && claims.ExpiresAt.Time.Before(time.Now()) {
+	if claims.ExpiresAt != nil && claims.ExpiresAt.Before(time.Now()) {
 		return nil, ErrExpiredToken
 	}
 	if claims.Typ != expected {
