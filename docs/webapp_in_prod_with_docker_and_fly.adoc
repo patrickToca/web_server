@@ -4,7 +4,7 @@
 :icons: font
 :source-highlighter: coderay
 :author_name: patrick toca
-:author_email: link:mailto:[pmjtoca@gmail.com]
+:author_email: link:mailto:pmjtoca@gmail.com[pmjtoca@gmail.com]
 :stylesheet: ../../asciidoctor.css
 :pdf-theme: ../../uked-theme.yml
 :relfileprefix: ./
@@ -12,13 +12,13 @@ ifdef::env-github,env-browser[:outfilesuffix: .adoc]
 :docdir: ../docs
 :sectnums:
 :sectnumlevels: 3
-:description: How to run the MyWebApp container in local Docker, Docker Compose, and on Fly.io. Covers the two most common runtime failures — a missing AGE_KEY and an unreachable PostgreSQL host — and documents the verified Compose setup that builds locally, connects to PostgreSQL, publishes port 8080, and returns {"status":"ok"} from /health.
-:keywords: docker, compose, dockerfile, fly, flyctl, age, sops, secrets, postgresql, host.docker.internal, bridge network, healthcheck, AGE_KEY, DB_HOST, container, production
+:description: How to run the MyWebApp container in local Docker, Docker Compose, and on Fly.io. Covers the runtime configuration the image needs, the fail-closed security checks that abort the boot when HSTS or CSP is misconfigured, and the trusted-proxy configuration that keeps IP-based rate limiting accurate behind a load balancer.
+:keywords: docker, compose, dockerfile, fly, flyctl, age, sops, secrets, postgresql, host.docker.internal, bridge network, healthcheck, AGE_KEY, DB_HOST, container, production, hsts, csp, trusted-proxies
 
 = Running in Production with Docker and Fly.io
 
 {author_name}
-v0.8.3, October 7th, 2026
+v0.8.4, October 10th, 2026
 
 '''
 
@@ -40,15 +40,18 @@ image needs and the failures that occur when it is missing.
 
 The container image is self-contained. Every failure observed so far
 has been caused by configuration that must be supplied at *runtime*,
-not at build time. Two failures dominate:
+not at build time. Three failures dominate:
 
 . A missing `AGE_KEY`, which the application requires to decrypt its
   secrets file at boot. The process exits immediately when it is absent.
 . A `DB_HOST` value of `localhost`, which inside a container refers to
   the container itself, not the host running PostgreSQL.
+. A missing or unsafe security-headers configuration. Since v0.8.4,
+  the boot fails in production and staging when HSTS is off or CSP is
+  report-only.
 
-Both are addressed in this document. The Compose setup described here
-has been verified end-to-end: the image builds locally, the app
+All three are addressed in this document. The Compose setup described
+here has been verified end-to-end: the image builds locally, the app
 connects to PostgreSQL, port 8080 is published, and `/health` returns
 `{"status":"ok"}`.
 
@@ -59,13 +62,15 @@ By the end of this document you will be able to:
   and out of git.
 . Bring the same setup up with `docker compose`.
 . Deploy the same image to Fly.io with `AGE_KEY` stored as a Fly Secret.
-. Diagnose the two common runtime failures from the container logs.
+. Configure the trusted-proxy list so IP-based rate limiting works
+  behind a load balancer.
+. Diagnose the three common runtime failures from the container logs.
 
 <<<
 
-== The two runtime requirements
+== The three runtime requirements
 
-The application will not start without both of these:
+The application will not start without these:
 
 . **`AGE_KEY`** — the age private key used by `internal/credentials` to
   decrypt `secrets.enc.yaml`. Without it, the process exits with a
@@ -73,9 +78,12 @@ The application will not start without both of these:
 . **A reachable PostgreSQL instance** — the connection is established
   at startup. The host must be set correctly for the container's
   network namespace.
+. **A safe security-headers configuration** — in production and
+  staging, `HSTS_MAX_AGE` must be non-zero and `CSP_REPORT_ONLY` must
+  be false. Development tolerates both being at their defaults.
 
-Everything else — port, log format, cookie flags, CSP policy — has a
-safe default and can be overridden if needed.
+Everything else — port, log format, cookie flags — has a safe default
+and can be overridden if needed.
 
 <<<
 
@@ -110,6 +118,7 @@ Create a local environment file containing the required runtime values:
 
 [source,.env.docker.local]
 ----
+APP_ENV=production
 AGE_KEY=AGE-SECRET-KEY-...
 DB_HOST=host.docker.internal
 DB_PORT=5432
@@ -117,6 +126,13 @@ DB_USER=pmjtoca
 DB_NAME=MyWebApp
 DB_SSLMODE=disable
 PORT=8080
+LOG_FORMAT=text
+LOG_LEVEL=debug
+HSTS_MAX_AGE=31536000
+HSTS_INCLUDE_SUBDOMAINS=true
+CSP_REPORT_ONLY=false
+COOKIE_SECURE=false
+TRUSTED_PROXIES=
 ----
 
 Then start the container with that file:
@@ -134,6 +150,12 @@ docker run --rm \
 already 8080, but setting it in the env file makes the Compose port
 mapping and the application's listen port agree without relying on the
 default.
+
+`COOKIE_SECURE=false` is the one production value you cannot honor on
+plain HTTP. The browser will refuse to store a Secure cookie over
+`http://localhost`, and login will appear to succeed but every
+subsequent request will be unauthenticated. Set it to `true` once the
+container is behind HTTPS.
 
 Add the env file to `.gitignore` so it is never committed:
 
@@ -213,13 +235,128 @@ connections from Docker:
   or the container's source address, with `md5`, `scram-sha-256`, or
   `trust` as appropriate.
 * Any host firewall must allow traffic from the Docker bridge network
-  to the PostgreSQL port. On a host with `ufw`, the Docker bridge
-  interface (`docker0`) is usually already permitted; on a host with
-  `firewalld`, an explicit rule may be required.
+  to the PostgreSQL port.
 
 <<<
 
-== Part 3 — Docker Compose
+== Part 3 — Preventing the fail-closed boot on security configuration
+
+Since v0.8.4, the application refuses to start in production and
+staging when either of the following is true:
+
+* `HSTS_MAX_AGE` is `0`. A deployed environment that does not send
+  `Strict-Transport-Security` permits a protocol downgrade.
+* `CSP_REPORT_ONLY` is `true`. A deployed environment with a
+  report-only CSP has no CSP enforcement.
+
+The check is in `LoadSecurityHeadersConfig` and fires after
+`credentials.Load` and before the database pool is opened. When it
+fires, the process exits with a message naming the offending variable
+and the environment it saw.
+
+=== What the boot log says when it fails
+
+[source]
+----
+{"level":"ERROR","msg":"security headers configuration failed",
+ "error":"insecure security-headers configuration:
+ HSTS_MAX_AGE is 0 in production; set it to at least 31536000
+ (APP_ENV=production)"}
+----
+
+The process exits with code 1. Nothing listens on the port.
+
+=== What to set
+
+For a deployed environment, set:
+
+[source,properties]
+----
+APP_ENV=production
+HSTS_MAX_AGE=31536000
+HSTS_INCLUDE_SUBDOMAINS=true
+HSTS_PRELOAD=false
+CSP_REPORT_ONLY=false
+----
+
+`HSTS_PRELOAD=false` is the safe default. Preload commits the domain
+to HTTPS permanently across a shipped list of browsers; submission is
+not reversible in under six weeks. Leave it off until the domain has
+been stable for months.
+
+`CSP_REPORT_ONLY=false` turns the policy from "report violations" to
+"enforce violations". Confirm in a staging environment that no page
+breaks before flipping this in production.
+
+=== Where the values come from
+
+In a container run, the values come from the `ENV` block in the
+`Dockerfile` or from an `--env-file`. The v0.8.4 image ships the
+production values in its `ENV` block, so a plain `docker run` boots
+with the safe configuration.
+
+In a Fly deployment, the values come from `fly.toml`'s `[env]` block.
+The next section shows the block.
+
+<<<
+
+== Part 4 — Preventing the trusted-proxy misconfiguration
+
+The rate limiter keys on the client IP returned by Gin's `ClientIP()`.
+That function reads `X-Forwarded-For` only when the immediate peer of
+the connection is on a trusted network. The trusted network comes from
+the `TRUSTED_PROXIES` environment variable, a comma-separated list of
+CIDRs.
+
+The default is empty, which means "trust nothing". That is correct for
+a direct `docker run` from the host. On Fly, the load balancer is on
+`fdaa::/16`, and that value belongs in `fly.toml`:
+
+[source,toml]
+----
+[env]
+  TRUSTED_PROXIES = "fdaa::/16"
+----
+
+Without it, every request looks like it comes from the load balancer
+and the rate limiter treats the entire user base as a single client.
+The symptom is that legitimate users are throttled after a handful of
+requests, even though each of them makes only one.
+
+=== What the boot log says
+
+On a successful boot, the log contains one of:
+
+[source]
+----
+INFO trusted proxies configured cidrs=[fdaa::/16]
+----
+
+or, when the list is empty:
+
+[source]
+----
+INFO trusted proxies: none (X-Forwarded-For is ignored)
+----
+
+Read this line after every deploy. If it shows `none` and you expect
+`fdaa::/16`, the variable is not reaching the process.
+
+=== Multiple proxies
+
+If your deployment has more than one proxy in front of the
+application — Cloudflare, then Fly, then something else — list every
+proxy in the chain, comma-separated, from the outermost inward. The
+value is the union of every network that can legitimately place a
+value in `X-Forwarded-For`. If you are unsure, leave the list empty.
+The failure mode of an empty list is "the rate limiter keys on the
+load balancer", which is imprecise but not exploitable. The failure
+mode of an over-broad list is "any client in the trusted range can
+spoof the header", which is exploitable.
+
+<<<
+
+== Part 5 — Docker Compose
 
 For local development, replace ad-hoc `docker run` invocations with a
 Compose file. This makes the runtime configuration explicit and
@@ -265,10 +402,7 @@ networks:
 
 `image: mywebapp:local` and `pull_policy: never`::
   Tag the locally built image and instruct Compose not to attempt a
-  registry pull. This is what "prevents registry pulls" in the commit
-  message refers to. Without `pull_policy: never`, a `docker compose up`
-  can go looking for `mywebapp:local` on Docker Hub and fail if a
-  network blip occurs.
+  registry pull.
 
 `ports`::
   Publish the application's listen port on the host. The left side is
@@ -277,54 +411,30 @@ networks:
 
 `env_file`::
   Read `.env.docker.local` and pass each key as an environment variable
-  into the container. This is where `AGE_KEY`, `DB_HOST`, and the rest
-  of the runtime configuration live.
+  into the container. This is where `AGE_KEY`, `DB_HOST`, and the
+  security-headers values live.
 
 `extra_hosts`::
   Map `host.docker.internal` to the host gateway inside the container.
-  On Linux, Docker does not provide this name by default. This entry is
-  what makes the `DB_HOST=host.docker.internal` value in
-  `.env.docker.local` resolve to the host running PostgreSQL.
+  On Linux, Docker does not provide this name by default.
 
 `networks`::
-  Attach the container to a named bridge network. A named network is
-  used rather than the default `bridge` because the default network
-  has a fixed set of characteristics — no automatic service
-  discovery by name, a different gateway address — that have caused
-  problems in the past. The named network behaves predictably.
+  Attach the container to a named bridge network. The named network
+  behaves predictably.
 
 `healthcheck.test`::
-  A `wget` against `/health`. The endpoint returns `{"status":"ok"}`
-  only when the database ping succeeds, so the healthcheck is a real
-  liveness signal, not just "the HTTP server is listening."
-  `wget -qO-` is a GET request; `--spider` was the form used in earlier
-  iterations and was not compatible with every `wget` build. The GET
-  form is what "GET-compatible healthcheck" in the commit message
-  refers to.
-
-`healthcheck.interval`, `timeout`, `retries`, `start_period`::
-  Reasonable defaults. `start_period: 10s` gives the application time
-  to load secrets and open the database pool before the first
-  healthcheck runs.
+  A `wget` against `/health`. The endpoint does no I/O, so the
+  healthcheck is a cheap liveness signal. `wget -qO-` is a GET request.
 
 `restart: unless-stopped`::
   Restart the container if it exits, except when it was explicitly
-  stopped by the user. This is the standard choice for a long-running
-  service in a local Compose setup.
+  stopped by the user.
 
 === Running it
 
 [source,bash]
 ----
 docker compose up --build
-----
-
-The first run builds the image. Subsequent runs reuse it. To force a
-rebuild after a code change:
-
-[source,bash]
-----
-docker compose up --build --force-recreate
 ----
 
 To run in the background:
@@ -343,8 +453,7 @@ docker compose down
 
 === Verifying the setup
 
-The commit that fixed the Compose setup verified four things. The same
-four checks apply to any new environment.
+Four checks apply to any new environment.
 
 ==== 1. The image builds locally
 
@@ -354,28 +463,16 @@ docker compose build
 ----
 
 Expected: a successful build, ending with a `Successfully tagged
-mywebapp:local` line. If the build fails, the error is usually a
-missing file referenced by the `Dockerfile` or a Go compilation error;
-the output names the file and line.
+mywebapp:local` line.
 
 ==== 2. The app connects to PostgreSQL
 
 [source,bash]
 ----
-docker compose logs app | grep -i "database\|postgres\|pool"
+docker compose logs app | grep -i "pool\|database"
 ----
 
-Expected: a log line indicating the pool was configured. If the app
-cannot reach PostgreSQL, the log contains a connection error naming the
-host and port it tried.
-
-If the app is running but the log shows a retry loop, confirm that:
-
-* `DB_HOST` in `.env.docker.local` is `host.docker.internal`, not
-  `localhost`.
-* PostgreSQL is listening on an interface reachable from the Docker
-  bridge, not only on the host's loopback.
-* `pg_hba.conf` permits the container's source address.
+Expected: a log line indicating the pool was configured.
 
 ==== 3. Port 8080 is published
 
@@ -384,10 +481,7 @@ If the app is running but the log shows a retry loop, confirm that:
 docker compose ps
 ----
 
-Expected: a line showing `0.0.0.0:8080->8080/tcp` in the `PORTS`
-column. If the column shows only `8080/tcp`, the `ports:` mapping in
-`compose.yaml` was not applied — check that the indentation is correct
-and that the service is the one you edited.
+Expected: `0.0.0.0:8080->8080/tcp` in the `PORTS` column.
 
 ==== 4. `/health` returns `{"status":"ok"}`
 
@@ -396,52 +490,33 @@ and that the service is the one you edited.
 curl -s http://localhost:8080/health
 ----
 
-Expected:
+Expected: `{"status":"ok"}`.
 
-[source,json]
-----
-{
-    "status": "ok",
-    "time": 1758567833,
-    "pool": {
-        "total": 5,
-        "idle": 5,
-        "acquired": 0,
-        "max": 25,
-        "constructing": 0,
-        "acquire_count": 12,
-        "empty_acquire": 0,
-        "canceled_acquire": 0,
-        "acquire_duration_ms": 3
-    }
-}
-----
-
-The `pool` block is present because `/health` pings the database. A
-`status` of `ok` means the ping succeeded. A `503` or a `status` of
-`degraded` means the database is not reachable; the `pool` block will
-show `total: 0` or a non-zero `canceled_acquire`.
-
-==== 5. The Compose healthcheck reports healthy
+==== 5. The boot log names the security configuration
 
 [source,bash]
 ----
-docker compose ps
+docker compose logs app | grep -E 'trusted proxies|security headers'
 ----
 
-Expected: a `STATUS` of `Up ... (healthy)` after the `start_period`
-elapses. A status of `(unhealthy)` after the retry count means the
-healthcheck is failing. Check `docker compose logs app` for the
-underlying error, and confirm that `wget` is available inside the
-image — the healthcheck depends on it.
+Expected:
+
+[source]
+----
+INFO trusted proxies: none (X-Forwarded-For is ignored)
+INFO security headers configuration hsts_max_age=31536000 hsts_include_subdomains=true hsts_preload=false csp_report_only=false
+----
+
+If the second line is missing, the boot failed before reaching it. Read
+the error above it.
 
 <<<
 
-== Part 4 — Fly.io deployment
+== Part 6 — Fly.io deployment
 
 Fly.io runs the same image. The only difference is where the runtime
-configuration comes from: an env file locally, Fly Secrets in
-production.
+configuration comes from: an env file locally, Fly Secrets and
+`fly.toml`'s `[env]` block in production.
 
 === One-time setup
 
@@ -470,9 +545,33 @@ sensitive:
 [source,toml]
 ----
 [env]
+  APP_ENV = "production"
   PORT = "8080"
-  GIN_MODE = "release"
   LOG_FORMAT = "json"
+  LOG_LEVEL = "info"
+  GIN_MODE = "release"
+
+  # Security headers — required by the fail-closed check in
+  # LoadSecurityHeadersConfig. Without these, the boot aborts with
+  # "insecure security-headers configuration".
+  HSTS_MAX_AGE = "31536000"
+  HSTS_INCLUDE_SUBDOMAINS = "true"
+  HSTS_PRELOAD = "false"
+  CSP_REPORT_ONLY = "false"
+
+  # Cookies
+  COOKIE_SECURE = "true"
+  COOKIE_SAMESITE = "lax"
+
+  # Trusted proxies — Fly's internal network.
+  TRUSTED_PROXIES = "fdaa::/16"
+
+  # Database coordinates. The password is in secrets.enc.yaml.
+  DB_HOST = "mywebapp-db.internal"
+  DB_PORT = "5432"
+  DB_USER = "mywebapp"
+  DB_NAME = "mywebapp"
+  DB_SSLMODE = "require"
 
 [http_service]
   internal_port = 8080
@@ -491,12 +590,11 @@ sensitive:
 
 `internal_port` matches the `PORT` the application listens on. The
 `[[http_service.checks]]` block is the Fly equivalent of the Compose
-healthcheck; it hits `/health` with a GET, which is the same
-GET-compatible form the Compose file uses.
+healthcheck; it hits `/health` with a GET.
 
 === What must not go in `fly.toml`
 
-* `AGE_KEY` — it is a secret and belongs in `fly secrets`.
+* `AGE_KEY` — a secret, belongs in `fly secrets`.
 * `JWT_SECRET`, `CSRF_SECRET` — same.
 * `DB_PASSWORD` — same.
 * Any R2 credential — same.
@@ -509,14 +607,22 @@ If a value in `[env]` would be redacted in a log line, it belongs in
 [source,bash]
 ----
 fly status
-fly logs
+fly logs | grep -E 'trusted proxies|security headers'
 curl -s https://mywebapp.fly.dev/health | jq .
 curl -s https://mywebapp.fly.dev/version | jq .
 ----
 
-Expected: `status` is `ok`, the log contains a `credentials loaded`
-line with a non-zero count, and `/version` reports the tag and commit
-that were deployed.
+Expected:
+
+* `status` is `ok`.
+* The log shows `trusted proxies configured cidrs=[fdaa::/16]` and
+  `security headers configuration hsts_max_age=31536000 ...
+  csp_report_only=false`.
+* `/health` returns `{"status":"ok"}`.
+* `/version` reports the tag and commit that were deployed.
+
+If either log line is missing, the boot failed. Read the error above
+it; it names the variable to fix.
 
 === Rotating `AGE_KEY`
 
@@ -543,7 +649,7 @@ no way to decrypt a file with a key it was not encrypted to.
 
 <<<
 
-== Part 5 — Keeping production values out of local files
+== Part 7 — Keeping production values out of local files
 
 Local env files are a convenience for development only. For production:
 
@@ -552,8 +658,9 @@ Local env files are a convenience for development only. For production:
 * Keep non-secret configuration in the deployment configuration, not
   in a committed env file.
 * Keep the application's fail-fast behavior. The process should
-  continue to exit immediately when the age key or the database
-  configuration is missing.
+  continue to exit immediately when the age key, the database
+  configuration, or the security-headers configuration is missing or
+  unsafe.
 
 The `.gitignore` entries that support this:
 
@@ -569,13 +676,13 @@ secrets.yml
 secrets.env
 ----
 
-`secrets.enc.yaml` is deliberately **not** ignored. It is the
+`secrets/secrets.enc.yaml` is deliberately **not** ignored. It is the
 ciphertext, it is safe to commit, and `git diff` on it is meaningful
 because SOPS encrypts the values but leaves the keys readable.
 
 <<<
 
-== Part 6 — Troubleshooting
+== Part 8 — Troubleshooting
 
 === `no age key available`
 
@@ -586,8 +693,7 @@ The error from `credentials.Load`. Causes, in order of likelihood:
 . The env file was not read. Confirm the `--env-file` flag or the
    `env_file:` entry in `compose.yaml`.
 . The key file at `~/.config/sops/age/keys.txt` is missing or has
-   permissions looser than `0600`. `sops` and `age` refuse to read a
-   key file with looser permissions.
+   permissions looser than `0600`.
 
 === `failed to decrypt secrets.enc.yaml: no identity matched any of the recipients`
 
@@ -595,6 +701,17 @@ The `AGE_KEY` supplied to the container is not the one the file was
 encrypted to. Either the wrong key was passed, or the file was
 re-encrypted after the key was copied. Retrieve the correct key or
 re-encrypt the file to the current recipient.
+
+=== `insecure security-headers configuration: HSTS_MAX_AGE is 0`
+
+The fail-closed check fired. Either set `HSTS_MAX_AGE` to a non-zero
+value (`31536000` is standard), or set `APP_ENV=development` if you are
+running the container locally and do not want the production posture.
+
+=== `insecure security-headers configuration: CSP_REPORT_ONLY is true`
+
+Same check, different variable. Either set `CSP_REPORT_ONLY=false`, or
+set `APP_ENV=development`.
 
 === `connection refused` or `dial tcp ... connect: connection refused` on the database
 
@@ -633,8 +750,7 @@ ports:
   - "8081:8080"
 ----
 
-The container still listens on 8080; only the host port changes. Update
-any client that connects to the host port accordingly.
+The container still listens on 8080; only the host port changes.
 
 === The Compose healthcheck never reports healthy
 
@@ -649,12 +765,8 @@ If the application is logging normally, the healthcheck itself is
 failing. Two common causes:
 
 . `wget` is not present in the image. The healthcheck depends on it.
-   Either add `wget` to the runtime stage of the `Dockerfile`, or
-   change the healthcheck to use a tool the image does have, such as
-   `curl`.
 . The healthcheck runs before the database pool is ready and the retry
-   count is exhausted. Increase `start_period` and `retries` in
-   `compose.yaml`.
+   count is exhausted. Increase `start_period` and `retries`.
 
 === `pull access denied for mywebapp` on `docker compose up`
 
@@ -670,12 +782,19 @@ pull_policy: never
 and that the build succeeds with `docker compose build` before
 `docker compose up`.
 
-=== The app starts but `/health` returns `degraded`
+=== Users are being rate-limited after a few requests
 
-The HTTP server is listening but the database ping fails. The `pool`
-block in the response shows the current pool state; a `total` of `0` or
-a non-zero `canceled_acquire` points at a connection problem. Check
-`docker compose logs app` for the underlying error.
+The trusted-proxy list is probably empty on a deployment that has a
+load balancer. Check the boot log:
+
+[source,bash]
+----
+fly logs | grep 'trusted proxies'
+----
+
+If it shows `none` and the deployment is behind a proxy, set
+`TRUSTED_PROXIES` in `fly.toml` to the load balancer's CIDR. On Fly,
+that value is `fdaa::/16`.
 
 === `docker compose up` cannot find `host.docker.internal`
 
@@ -699,14 +818,17 @@ value (Docker 20.10 or later).
   or a platform secret in production.
 . Set `DB_HOST` to the real location of PostgreSQL, never to
   `localhost` from inside a container.
+. Set `HSTS_MAX_AGE` and `CSP_REPORT_ONLY` to their production values.
+  The boot refuses to start otherwise.
+. Set `TRUSTED_PROXIES` to the load balancer's CIDR. On Fly, that is
+  `fdaa::/16`. The default is empty (trust nothing).
 . Use `compose.yaml` for local runs, with `pull_policy: never` to
   prevent registry pulls, a named bridge network, and
   `host.docker.internal:host-gateway` for host access.
-. Use a GET-compatible healthcheck against `/health`, which is a real
-  liveness signal because it pings the database.
+. Use a GET-compatible healthcheck against `/health`.
 . Use Fly secrets for `AGE_KEY` and nothing else; everything else lives
   in `secrets.enc.yaml`.
-. Preserve fail-fast behavior on missing configuration.
+. Preserve fail-fast behavior on missing or unsafe configuration.
 
 <<<
 
@@ -717,25 +839,35 @@ value (Docker 20.10 or later).
 | Path | Purpose
 
 | `Dockerfile`
-| The image build definition.
+| The image build definition. Since v0.8.4 its `ENV` block carries the
+  production security-headers values.
 
 | `compose.yaml`
 | The local Compose service definition.
 
 | `.env.docker.local`
 | The untracked local env file. Gitignored. Contains `AGE_KEY`,
-  `DB_HOST`, and the other runtime values.
+  `DB_HOST`, the security-headers values, and the other runtime
+  variables.
 
 | `fly.toml`
-| The Fly application manifest. Contains non-secret configuration only.
+| The Fly application manifest. Contains non-secret configuration only,
+  including `TRUSTED_PROXIES` and the security-headers values.
 
-| `secrets.enc.yaml`
+| `secrets/secrets.enc.yaml`
 | The committed, SOPS-encrypted secrets file. Decrypted at boot by
   `internal/credentials`.
 
 | `internal/credentials/credentials.go`
 | The loader that reads `AGE_KEY` and exports the decrypted secrets
   into the environment.
+
+| `internal/middleware/security_headers.go`
+| The middleware that emits the headers and the loader that enforces
+  the fail-closed check.
+
+| `internal/middleware/proxies.go`
+| The loader that reads `TRUSTED_PROXIES`.
 
 | `AGE_KEY`
 | The Fly Secret holding the age private key.

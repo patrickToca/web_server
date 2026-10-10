@@ -4,7 +4,7 @@
 :icons: font
 :source-highlighter: coderay
 :author_name: patrick toca
-:author_email: link:mailto:[pmjtoca@gmail.com]
+:author_email: link:mailto:pmjtoca@gmail.com[pmjtoca@gmail.com]
 :stylesheet: ../../asciidoctor.css
 :pdf-theme: ../../uked-theme.yml
 :relfileprefix: ./
@@ -68,32 +68,40 @@ document was written:
 
 | `make test`
 | Every test passes. The full suite runs in roughly two minutes on an
-| idle development machine.
+  idle development machine.
 
 | Credentials loader
 | Decrypts `secrets/secrets.enc.yaml` at boot, exports six secrets.
-| Verified by `count=6` in the boot log.
+  Verified by `count=6` in the boot log.
 
 | Password hashing
-| Argon2id. 64 MiB memory, 3 iterations, 2 threads. 90–160 ms per
-| hash on the development machine.
+| Argon2id. 64 MiB memory, 3 iterations, 2 threads. 90–160 ms per hash
+  on the development machine.
 
 | Trusted proxies
-| Loaded from `TRUSTED_PROXIES`. Default is empty (trust nothing).
+| Loaded from `TRUSTED_PROXIES`. Empty default (trust nothing). Ten
+  tests in `internal/middleware/proxies_test.go`.
 
 | HSTS and CSP
-| `LoadSecurityHeadersConfig` refuses to return a config with HSTS
-| off or a CSP in report-only mode when `APP_ENV` is production or
-| staging. Development tolerates both.
+| `LoadSecurityHeadersConfig` refuses to return a config with HSTS off
+  or a CSP in report-only mode when `APP_ENV` is production or staging.
+  Development tolerates both. Eight tests in
+  `internal/middleware/security_headers_test.go`.
 
 | Application boot
 | Serves HTTP on port 8080. The home page renders with the R2 welcome
-| image when the R2 credentials are present.
+  image when the R2 credentials are present.
+
+| Container
+| The image boots with the production posture and logs the resolved
+  trusted-proxy list and security-headers configuration. Verified by
+  running `patricktoca/mywebapp:v0.8.4_20261010` with
+  `.env.docker.local`.
 
 | Development environment
 | Shell startup is fast. GoLand no longer competes for CPU after
-| excluding `bin/`, `logs/`, `node_modules/`, and `coverage.*` from
-| the indexer.
+  excluding `bin/`, `logs/`, `node_modules/`, and `coverage.*` from the
+  indexer.
 |===
 
 <<<
@@ -218,9 +226,9 @@ matters.
 | Why
 | The fail-closed checks added in v0.8.4 will refuse to start in
   production if `HSTS_MAX_AGE` is 0 or `CSP_REPORT_ONLY` is true.
-  `fly.toml` must set the production values, and `TRUSTED_PROXIES`
-  must be set to `fdaa::/16` so the rate limiter keys on the real
-  client address rather than on the load balancer.
+  `fly.toml` must set the production values, and `TRUSTED_PROXIES` must
+  be set to `fdaa::/16` so the rate limiter keys on the real client
+  address rather than on the load balancer.
 
 | How
 | Confirm the `[env]` block in `fly.toml` contains:
@@ -269,9 +277,9 @@ you or fail an audit once there are users you do not personally know.
 | How
 | A `login_attempts` table with `email`, `count`, and
   `last_attempt_at`. Increment on failed login, clear on success.
-  Refuse further attempts for a cooldown period after a threshold
-  (say 10 failures, 15-minute cooldown). Log every lockout at `warn`
-  level so it is visible in `fly logs`.
+  Refuse further attempts for a cooldown period after a threshold (say
+  10 failures, 15-minute cooldown). Log every lockout at `warn` level
+  so it is visible in `fly logs`.
 
 | Estimate
 | 1 day, including the migration, the service, the tests, and the
@@ -314,13 +322,13 @@ you or fail an audit once there are users you do not personally know.
 | Why
 | The SQL is parameterised, so there is no injection. But `%` and `_`
   in the user-supplied search string are treated as wildcards by
-  `ILIKE`. A search for `%` matches every row; a search for `_`
-  matches any single character. This is a usability and performance
-  problem rather than a security one.
+  `ILIKE`. A search for `%` matches every row; a search for `_` matches
+  any single character. This is a usability and performance problem
+  rather than a security one.
 
 | How
-| Escape `%`, `_`, and `\` in the Go layer before passing the string
-  to the query. Change the SQL to use `ESCAPE '\'`.
+| Escape `%`, `_`, and `\` in the Go layer before passing the string to
+  the query. Change the SQL to use `ESCAPE '\'`.
 
 | Estimate | 1 hour, including a test.
 |===
@@ -333,20 +341,16 @@ you or fail an audit once there are users you do not personally know.
 
 | Why
 | `SearchUsers` does `ILIKE '%term%'` on `username`, `email`, and
-| `full_name`. Without a trigram index, each search is a sequential
-| scan. At a few hundred users this is invisible; at ten thousand it
-| is the slowest query in the application.
+  `full_name`. Without a trigram index, each search is a sequential
+  scan. At a few hundred users this is invisible; at ten thousand it is
+  the slowest query in the application.
 
 | How
 | `CREATE EXTENSION IF NOT EXISTS pg_trgm;` and
-  `CREATE INDEX ... USING gin (username gin_trgm_ops)` on each of
-  the three columns. The extension is available in Fly Postgres by
-  default.
+  `CREATE INDEX ... USING gin (username gin_trgm_ops)` on each of the
+  three columns. The extension is available in Fly Postgres by default.
 
-| Estimate
-| 1 hour.
-|
-
+| Estimate | 1 hour.
 |===
 
 <<<
@@ -366,20 +370,20 @@ failures. They are worth doing, but nothing breaks if they wait.
 | Why
 | The current CSP allows `'unsafe-inline'` and `'unsafe-eval'` in
   `script-src`. Both are needed because HTMX's `hx-on` attributes and
-  the inline `<script>` blocks in the templates are not compatible
-  with a stricter policy. The consequence is that any XSS that lands
-  in a template is unrestricted.
+  the inline `<script>` blocks in the templates are not compatible with
+  a stricter policy. The consequence is that any XSS that lands in a
+  template is unrestricted.
 
 | How
 | Generate a nonce per request, inject it into every `<script>` tag,
   and drop `'unsafe-inline'`. HTMX's `hx-on` uses `new Function`, so
   `'unsafe-eval'` cannot be dropped without replacing `hx-on` with
-  external event listeners. That is a larger change and can be done
-  as a follow-up.
+  external event listeners. That is a larger change and can be done as
+  a follow-up.
 
 | Estimate
-| 1 day for the nonce plumbing, half a day for the template audit,
-  half a day for the `hx-on` replacement if you decide to do it.
+| 1 day for the nonce plumbing, half a day for the template audit, half
+  a day for the `hx-on` replacement if you decide to do it.
 |===
 
 === Item 8 — CSRF token bound to the session
@@ -390,15 +394,15 @@ failures. They are worth doing, but nothing breaks if they wait.
 
 | Why
 | The CSRF token is signed by the server, so it proves the token was
-  issued by this server. It does not prove it was issued to *this
-  user*. A subdomain XSS, a cookie-tossing attack, or a shared browser
-  profile can move a valid CSRF token from one session to another.
+  issued by this server. It does not prove it was issued to *this user*.
+  A subdomain XSS, a cookie-tossing attack, or a shared browser profile
+  can move a valid CSRF token from one session to another.
 
 | How
-| Include the refresh token's `jti` (or the user ID) in the CSRF
-  token's HMAC input. On validation, look up the session and confirm
-  the token was issued for it. This turns the double-submit cookie
-  into a synchronizer token.
+| Include the refresh token's `jti` (or the user ID) in the CSRF token's
+  HMAC input. On validation, look up the session and confirm the token
+  was issued for it. This turns the double-submit cookie into a
+  synchronizer token.
 
 | Estimate
 | 4 hours, including the schema change to record which session issued
@@ -413,17 +417,17 @@ failures. They are worth doing, but nothing breaks if they wait.
 
 | Why
 | The parameters (64 MiB, 3 iterations, 2 threads) are compile-time
-  constants. On a slower CPU — Fly's `shared-cpu-1x`, for example —
-  the hash may take longer than the target 100–200 ms. Making the
-  memory and iteration counts configurable via environment variables,
-  with a default that matches the current values, allows
-  per-environment tuning without a code change.
+  constants. On a slower CPU — Fly's `shared-cpu-1x`, for example — the
+  hash may take longer than the target 100–200 ms. Making the memory
+  and iteration counts configurable via environment variables, with a
+  default that matches the current values, allows per-environment
+  tuning without a code change.
 
 | How
-| Read `ARGON2_MEMORY_KIB` and `ARGON2_ITERATIONS` from the
-  environment, defaulting to the current constants. `HashPassword`
-  uses them; `NeedsRehash` compares the stored parameters to the
-  current ones. The `NeedsRehash` path already exists and works.
+| Read `ARGON2_MEMORY_KIB` and `ARGON2_ITERATIONS` from the environment,
+  defaulting to the current constants. `HashPassword` uses them;
+  `NeedsRehash` compares the stored parameters to the current ones. The
+  `NeedsRehash` path already exists and works.
 
 | Estimate
 | 2 hours, including tests for the environment parsing and the
@@ -437,15 +441,15 @@ failures. They are worth doing, but nothing breaks if they wait.
 | Where | `internal/service/session_service.go`
 
 | Why
-| A user can accumulate unlimited session rows. Each login creates
-  one. A long-lived account with a bot that logs in repeatedly fills
-  the table. `RevokeAllUserSessions` mitigates on role change, but
-  that is not a general solution.
+| A user can accumulate unlimited session rows. Each login creates one.
+  A long-lived account with a bot that logs in repeatedly fills the
+  table. `RevokeAllUserSessions` mitigates on role change, but that is
+  not a general solution.
 
 | How
-| Before creating a new session, count the active sessions for the
-  user. If the count exceeds a cap (say 10), revoke the oldest. One
-  query, one transaction.
+| Before creating a new session, count the active sessions for the user.
+  If the count exceeds a cap (say 10), revoke the oldest. One query, one
+  transaction.
 
 | Estimate | 2 hours.
 |===
@@ -458,10 +462,10 @@ failures. They are worth doing, but nothing breaks if they wait.
 
 | Why
 | When a boot fails, the log line names the failure but not the state
-  that caused it. A boot log that records the resolved `SOPS_PATH`,
-  the environment, the pool configuration, and the JWT and CSRF TTLs
-  makes every "why did it fail on Fly but work locally" question
-  answerable from a single `fly logs` capture.
+  that caused it. A boot log that records the resolved `SOPS_PATH`, the
+  environment, the pool configuration, and the JWT and CSRF TTLs makes
+  every "why did it fail on Fly but work locally" question answerable
+  from a single `fly logs` capture.
 
 | How
 | A `slog.Info` line after each major step, with the values that step
@@ -482,13 +486,14 @@ These items improve the project but are not on any critical path.
 [cols="1,3"]
 |===
 | Where
-| `.pre-commit-config.yaml` or a shell script at `.git/hooks/pre-commit`.
+| `.pre-commit-config.yaml` or a shell script at
+  `.git/hooks/pre-commit`.
 
 | Why
 | The `.env` incident is what surfaced the whole secrets conversation.
-  A hook that scans staged files for `SECRET=`, `PASSWORD=`,
-  `API_KEY=` patterns, and for the age private key format
-  (`AGE-SECRET-KEY-1`), would have caught it at the commit.
+  A hook that scans staged files for `SECRET=`, `PASSWORD=`, `API_KEY=`
+  patterns, and for the age private key format (`AGE-SECRET-KEY-1`),
+  would have caught it at the commit.
 
 | Estimate | 1 hour.
 |===
@@ -501,15 +506,15 @@ These items improve the project but are not on any critical path.
 
 | Why
 | When a boot fails with "no age key available", it is useful to know
-  whether the key file is missing, the environment variable is empty,
-  or the key is present but for the wrong recipient. A log line with
-  the first 8 bytes of a hash of the public key makes this a one-line
+  whether the key file is missing, the environment variable is empty, or
+  the key is present but for the wrong recipient. A log line with the
+  first 8 bytes of a hash of the public key makes this a one-line
   diagnosis.
 
 | How
-| After `ensureAgeKey`, derive the public key from the loaded key,
-  hash it, and log the first 8 bytes. The public key is not sensitive;
-  the hash is a stable identifier.
+| After `ensureAgeKey`, derive the public key from the loaded key, hash
+  it, and log the first 8 bytes. The public key is not sensitive; the
+  hash is a stable identifier.
 
 | Estimate | 1 hour.
 |===
@@ -521,18 +526,17 @@ These items improve the project but are not on any critical path.
 | Where | `pkg/db/config.go`
 
 | Why
-| `fly postgres attach` sets `DATABASE_URL` on the application and
-  sets the individual `DB_*` variables only if you ask it to. Reading
+| `fly postgres attach` sets `DATABASE_URL` on the application and sets
+  the individual `DB_*` variables only if you ask it to. Reading
   `DATABASE_URL` when present, and falling back to the individual
-  variables, makes the Fly attach workflow seamless. It also makes
-  the application portable to any platform that passes a
-  `DATABASE_URL` (Heroku, Render, Railway, most Docker Compose
-  setups).
+  variables, makes the Fly attach workflow seamless. It also makes the
+  application portable to any platform that passes a `DATABASE_URL`
+  (Heroku, Render, Railway, most Docker Compose setups).
 
 | How
 | In `LoadConfig`, if `DATABASE_URL` is set, parse it with
-  `pgx.ParseConfig` and populate the fields. Otherwise use the
-  existing `DB_*` variables. Ten lines.
+  `pgx.ParseConfig` and populate the fields. Otherwise use the existing
+  `DB_*` variables. Ten lines.
 
 | Estimate | 2 hours.
 |===
@@ -545,8 +549,8 @@ These items improve the project but are not on any critical path.
 
 | Why
 | The detail endpoint returns `cfg.ConnConfig.Host` and
-  `cfg.ConnConfig.Database`. Admin-only, so acceptable, but on a
-  shared host the database name can be sensitive.
+  `cfg.ConnConfig.Database`. Admin-only, so acceptable, but on a shared
+  host the database name can be sensitive.
 
 | How
 | Replace the host and database with stable hashes, or omit them.
@@ -561,11 +565,10 @@ These items improve the project but are not on any critical path.
 | Where | `internal/middleware/requestid.go`
 
 | Why
-| The middleware echoes the inbound `X-Request-ID` header verbatim.
-  An attacker can inject control characters or an over-long value.
-  Go's `http.Header.Set` refuses values with `\n`, so the header is
-  safe, but the value is also written into logs. Some log handlers do
-  not escape.
+| The middleware echoes the inbound `X-Request-ID` header verbatim. An
+  attacker can inject control characters or an over-long value. Go's
+  `http.Header.Set` refuses values with `\n`, so the header is safe, but
+  the value is also written into logs. Some log handlers do not escape.
 
 | How
 | Validate the inbound ID against `^[A-Za-z0-9_-]{1,64}$`. If it does
@@ -644,35 +647,33 @@ A concrete plan for the next seven days:
   documentation). Half a day at most.
 
 | Day 2–3
-| Item 4 (audit log). The item with the most future value; it pays
-  for itself the first time someone asks "who changed this".
+| Item 4 (audit log). The item with the most future value; it pays for
+  itself the first time someone asks "who changed this".
 
 | Day 4–5
-| Item 3 (account lockout). The last of the "before real users"
-  items.
+| Item 3 (account lockout). The last of the "before real users" items.
 
 | Day 6–7
-| Items 5, 6, 11, 14, 16. The small ones, batched. Each is under
-  two hours.
+| Items 5, 6, 11, 14, 16. The small ones, batched. Each is under two
+  hours.
 |===
 
 The remaining items — 7, 8, 9, 10, 12, 13, 15, 17 — can be done
 opportunistically when the surrounding code is being touched. That is
-how lists like this actually get finished: not by scheduling every
-item, but by picking them up when the opportunity is adjacent.
+how lists like this actually get finished: not by scheduling every item,
+but by picking them up when the opportunity is adjacent.
 
 <<<
 
 == Changes since the previous roadmap
 
-* **Items 1 and 2 from the previous list are done.** Trusted proxies
-  and fail-closed HSTS/CSP defaults are in place, tested, and
-  verified by the current test suite.
-* **The `QF1008` lint fixes are done.** Three redundant
-  embedded-field selectors were simplified; `make lint` is clean.
-* **A new item (17) was added.** Benchmarking the Argon2id parameters
-  on Fly closes the loop on the parameter tuning that was done on the
+* **Items 1 and 2 from the previous list are done.** Trusted proxies and
+  fail-closed HSTS/CSP defaults are in place, tested, and verified by
+  the current test suite.
+* **The `QF1008` lint fixes are done.** Three redundant embedded-field
+  selectors were simplified; `make lint` is clean.
+* **A new item (17) was added.** Benchmarking the Argon2id parameters on
+  Fly closes the loop on the parameter tuning that was done on the
   development machine. It is a measurement, not a code change.
 * **Item numbering has shifted.** Use this document's numbering going
-  forward. Cross-references to earlier roadmap versions will not
-  match.
+  forward. Cross-references to earlier roadmap versions will not match.

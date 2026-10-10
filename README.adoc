@@ -4,20 +4,20 @@
 :icons: font
 :source-highlighter: coderay
 :author_name: patrick toca
-:author_email: link:mailto:[pmjtoca@gmail.com]
+:author_email: link:mailto:pmjtoca@gmail.com[pmjtoca@gmail.com]
 :stylesheet: ../asciidoctor.css
 :pdf-theme: ../uked-theme.yml
 :relfileprefix: ./
 ifdef::env-github,env-browser[:outfilesuffix: .adoc]
 :sectnums:
 :sectnumlevels: 3
-:description: MyWebApp is a modern Go web application template combining Gin, HTMX, Tailwind CSS, PostgreSQL, SQLC, and a clean architecture. It ships with structured logging (slog), per-request correlation IDs, gzip compression, token-bucket rate limiting, defence-in-depth HTTP security headers, secure cookies, CSRF protection with HMAC-signed tokens, a two-token JWT scheme with short-lived access tokens and revocable refresh tokens, a public home page and a read-only member directory, build-time version metadata exposed at /version, an isolated test database environment, Docker and Docker Compose deployment, Fly.io deployment with SOPS-encrypted secrets, and a fully working users CRUD UI rendered with HTMX.
-:keywords: go, gin, htmx, tailwind, postgresql, sqlc, slog, jwt, rate limiting, gzip, clean architecture, csp, hsts, csrf, cookies, samesite, refresh-token, sessions, versioning, home-page, members, git-flow, testing, test-database, docker, compose, fly, sops, age, secrets
+:description: MyWebApp is a modern Go web application template combining Gin, HTMX, Tailwind CSS, PostgreSQL, SQLC, and a clean architecture.
+:keywords: go, gin, htmx, tailwind, postgresql, sqlc, slog, jwt, rate limiting, gzip, clean architecture, csp, hsts, csrf, cookies, samesite, refresh-token, sessions, versioning, home-page, members, git-flow, testing, test-database, docker, compose, fly, sops, age, secrets, argon2id
 
 = MyWebApp template
 
 {author_name}
-v0.8.3, October 7th, 2026
+v0.8.4, October 10th, 2026
 
 '''
 
@@ -53,6 +53,12 @@ runs the same image in production with SOPS-encrypted secrets.
 .Login and admin-list sequence
 image::docs/images/webapp_sequence_login.svg[Data-flow diagram,align="center",width=100%]
 
+<<<
+
+=== General description
+
+MyWebApp is a modern Go web application template combining Gin, HTMX, Tailwind CSS, PostgreSQL, SQLC, and a clean architecture. It ships with structured logging (slog), per-request correlation IDs, gzip compression, token-bucket rate limiting, defence-in-depth HTTP security headers, secure cookies, CSRF protection with HMAC-signed tokens, a two-token JWT scheme with short-lived access tokens and revocable refresh tokens, a public home page and a read-only member directory, build-time version metadata exposed at /version, an isolated test database environment, Docker and Docker Compose deployment, Fly.io deployment with SOPS-encrypted secrets, and a fully working users CRUD UI rendered with HTMX.
+
 === Technology Stack
 
 * **Go 1.21+** — Primary programming language
@@ -64,7 +70,7 @@ image::docs/images/webapp_sequence_login.svg[Data-flow diagram,align="center",wi
 * **SQLC** — Type-safe SQL code generation
 * **log/slog** — Structured logging (JSON or text)
 * **JWT** (`golang-jwt/jwt/v5`) — Access and refresh tokens with server-side revocation
-* **bcrypt** (`golang.org/x/crypto`) — Password hashing
+* **Argon2id** (`golang.org/x/crypto/argon2`) — Password hashing
 * **SOPS + age** — Encrypted secrets file, decrypted at boot by `internal/credentials`
 * **Cloudflare R2** (optional) — Private welcome image via presigned URLs
 * **Docker / Docker Compose** — Local containerised runs
@@ -84,12 +90,52 @@ The application follows a clean architecture pattern:
 * **Web Layer** (`internal/web/`) — HTMX/HTML handlers, auth flows, cookie helpers, template helpers
 * **Middleware Layer** (`internal/middleware/`) — Request ID, access log, gzip, rate limiting, security headers, CSRF, role check
 * **Logging Layer** (`internal/logging/`) — Process-wide `slog` configuration
-* **Auth Layer** (`internal/auth/`) — JWT issuance/validation, password hashing
+* **Auth Layer** (`internal/auth/`) — JWT issuance/validation, Argon2id password hashing
 * **Credentials Layer** (`internal/credentials/`) — Loads SOPS-encrypted secrets into the environment at boot
 * **Version Layer** (`internal/version/`) — Build-time metadata injected by the linker
 * **Testutil Layer** (`internal/testutil/`) — Isolated test database harness
 * **Database Layer** (`pkg/db/`) — Pool configuration, transactions, `.env` loading
 * **Object Storage** (`pkg/r2/`) — Cloudflare R2 client for presigned URLs
+
+=== What's New in v0.8.4
+
+* **Trusted proxies are configurable** — `TRUSTED_PROXIES` reads a
+  comma-separated CIDR list. The default is empty, which means "trust
+  nothing": Gin's `ClientIP()` returns the immediate peer and ignores
+  any `X-Forwarded-For` header the client sends. The previous default
+  trusted the entire RFC1918 space, which let any tenant on a shared
+  host spoof the header and defeat IP-based rate limiting. Ten new
+  tests in `internal/middleware/proxies_test.go`.
+* **Secure HSTS and CSP defaults are enforced** —
+  `LoadSecurityHeadersConfig` returns an error in production and
+  staging when HSTS is off (`HSTS_MAX_AGE=0`) or CSP is report-only
+  (`CSP_REPORT_ONLY=true`). Both defaults are safe for development and
+  unsafe for a deployed environment. The process refuses to start
+  rather than shipping without either. Eight new tests.
+* **The image ships the production security posture** — the
+  `Dockerfile`'s `ENV` block sets `HSTS_MAX_AGE`,
+  `HSTS_INCLUDE_SUBDOMAINS`, `HSTS_PRELOAD`, and `CSP_REPORT_ONLY` so
+  the image boots standalone without an external env file.
+* **The boot log names the resolved configuration** — two new
+  `slog.Info` lines report the trusted-proxy list and the
+  security-headers configuration. Reading the boot log is now a
+  one-line check that the deployment is configured as intended.
+* **Argon2id replaces bcrypt** — `HashPassword` and
+  `CheckPasswordHash` now use `golang.org/x/crypto/argon2` with the
+  OWASP-recommended parameters: 64 MiB memory, 3 iterations, 2
+  threads. Two new functions, `VerifyPassword` and `NeedsRehash`,
+  support future parameter upgrades without a schema migration. Nine
+  new tests.
+* **The Makefile is SOPS-aware** — database targets call
+  `load-secrets`, which decrypts `DB_PASSWORD` and `TEST_DB_PASSWORD`
+  from `secrets/secrets.enc.yaml` once per invocation and caches them
+  in `.make-secrets.env` at mode 0600.
+* **Seed program loads its own credentials** — `scripts/seed.go`
+  calls `credentials.Load()` before opening the pool and runs
+  standalone without the makefile.
+* **Three `QF1008` lint fixes** — redundant embedded-field selectors
+  simplified in `internal/auth/jwt.go` and
+  `internal/middleware/gzip.go`. Lint is clean.
 
 === What's New in v0.8.3
 
@@ -110,9 +156,7 @@ The application follows a clean architecture pattern:
 * **New doc:**
   link:docs/webapp_in_prod_with_docker_and_fly.adoc[Running in Production with Docker and Fly.io].
 
-=== What's New in v0.8.1
-
-* **CSRF token signing** — the CSRF cookie now carries an HMAC
+=== What's New in v0.8.1* **CSRF token signing** — the CSRF cookie now carries an HMAC
   signature over the token body. The middleware rejects any cookie
   whose signature does not verify, closing the cookie-tossing path in
   which an attacker plants a valid-looking cookie.
@@ -220,7 +264,8 @@ binary has no database drivers and will fail with
 
 === Environment Setup
 
-Create a `.env` file in the project root:
+Create a `.env` file in the project root. Configuration only — secrets
+live in `secrets/secrets.enc.yaml`:
 
 [source,.env]
 ----
@@ -228,11 +273,13 @@ Create a `.env` file in the project root:
 PORT=8080
 GIN_MODE=release
 
+# Environment
+APP_ENV=development
+
 # Database
 DB_HOST=localhost
 DB_PORT=5432
 DB_USER=postgres
-DB_PASSWORD=postgres
 DB_NAME=mywebapp
 DB_SSLMODE=disable
 
@@ -254,7 +301,6 @@ DB_STATEMENT_TIMEOUT=30s
 TEST_DB_HOST=localhost
 TEST_DB_PORT=5432
 TEST_DB_USER=postgres
-TEST_DB_PASSWORD=postgres
 TEST_DB_NAME=mywebapp_test
 TEST_DB_SSLMODE=disable
 
@@ -264,9 +310,6 @@ TEST_DB_MIN_CONNS=1
 TEST_DB_CONNECT_TIMEOUT=5s
 TEST_DB_STATEMENT_TIMEOUT=30s
 
-# Auth — ALWAYS override in production (or load from secrets.enc.yaml)
-JWT_SECRET=change-me-in-production-please
-
 # JWT token TTLs
 JWT_ACCESS_TTL=15m
 JWT_REFRESH_TTL=168h
@@ -274,6 +317,9 @@ JWT_REFRESH_TTL=168h
 # Logging
 LOG_FORMAT=json
 LOG_LEVEL=info
+
+# Trusted proxies. Empty means "trust nothing". On Fly, set to fdaa::/16.
+TRUSTED_PROXIES=
 
 # Security headers
 CSP_REPORT_ONLY=true
@@ -297,19 +343,28 @@ CSRF_FORM_FIELD=csrf_token
 CSRF_HEADER_NAME=X-CSRF-Token
 CSRF_TOKEN_LENGTH=32
 CSRF_COOKIE_MAX_AGE=0
-CSRF_SECRET=
 
-# Cloudflare R2 (optional — leave all four empty to disable the welcome image)
+# Cloudflare R2 (optional — leave R2_BUCKET_NAME empty to disable)
 R2_ACCOUNT_ID=
-R2_ACCESS_KEY_ID=
-R2_SECRET_ACCESS_KEY=
 R2_BUCKET_NAME=
 R2_IMAGE_KEY=welcome.jpg
 ----
 
+NOTE: `JWT_SECRET`, `CSRF_SECRET`, `DB_PASSWORD`, `TEST_DB_PASSWORD`,
+and the R2 credentials are **not** in `.env`. They live in
+`secrets/secrets.enc.yaml` and are decrypted at boot by
+`internal/credentials`. See
+link:docs/age_sops_fly_howto.adoc[the age/SOPS/Fly how-to].
+
 WARNING: For local HTTP development, `COOKIE_SECURE=false` is mandatory.
 If left at the `true` default while running over plain HTTP, the browser
 accepts the cookie on login but silently refuses to send it back.
+
+WARNING: With `APP_ENV=production`, the fail-closed checks refuse to
+start if `HSTS_MAX_AGE=0` or `CSP_REPORT_ONLY=true`. For local
+development, use `APP_ENV=development`. For a production-shaped local
+test, set both values to their production form and accept that
+`COOKIE_SECURE=true` will require HTTPS.
 
 <<<
 
@@ -375,7 +430,7 @@ and the foreign key from `sessions.user_id` to `users.id`.
 make seed
 ----
 
-This inserts five bcrypt-hashed demo users. The primary demo login is:
+This inserts five Argon2id-hashed demo users. The primary demo login is:
 
 * **alice@example.com** / `password123` (admin)
 
@@ -438,10 +493,13 @@ docker run --rm \
 
 === Using an untracked env file (recommended)
 
-Create `.env.docker.local` with the runtime values:
+Create `.env.docker.local` with the runtime values. It contains the
+age key and the database coordinates. For the production posture, it
+also sets `APP_ENV`, `HSTS_MAX_AGE`, and `CSP_REPORT_ONLY`:
 
 [source,.env.docker.local]
 ----
+APP_ENV=production
 AGE_KEY=AGE-SECRET-KEY-...
 DB_HOST=host.docker.internal
 DB_PORT=5432
@@ -449,6 +507,13 @@ DB_USER=pmjtoca
 DB_NAME=MyWebApp
 DB_SSLMODE=disable
 PORT=8080
+LOG_FORMAT=text
+LOG_LEVEL=debug
+HSTS_MAX_AGE=31536000
+HSTS_INCLUDE_SUBDOMAINS=true
+CSP_REPORT_ONLY=false
+COOKIE_SECURE=false
+TRUSTED_PROXIES=
 ----
 
 Then:
@@ -461,6 +526,12 @@ docker run --rm \
   -p 8080:8080 \
   mywebapp:debug
 ----
+
+The `COOKIE_SECURE=false` line is the one production value you cannot
+honor on plain HTTP. The browser will refuse to store a Secure cookie
+over `http://localhost`, and login will appear to succeed but every
+subsequent request will be unauthenticated. Set it to `true` once the
+container is behind HTTPS.
 
 === Docker Compose
 
@@ -534,6 +605,41 @@ lives in `secrets.enc.yaml`, which is decrypted at boot. Fly injects
 the secret into the running machine at start time, so it never appears
 in the image or in a repository.
 
+`fly.toml` sets the production security posture in its `[env]` block:
+
+[source,toml]
+----
+[env]
+  APP_ENV = "production"
+  PORT = "8080"
+  LOG_FORMAT = "json"
+  LOG_LEVEL = "info"
+  GIN_MODE = "release"
+
+  COOKIE_SECURE = "true"
+  COOKIE_SAMESITE = "lax"
+  CSP_REPORT_ONLY = "false"
+  HSTS_MAX_AGE = "31536000"
+  HSTS_INCLUDE_SUBDOMAINS = "true"
+  HSTS_PRELOAD = "false"
+
+  TRUSTED_PROXIES = "fdaa::/16"
+
+  DB_HOST = "..."
+  DB_PORT = "5432"
+  DB_USER = "..."
+  DB_NAME = "..."
+  DB_SSLMODE = "require"
+----
+
+The `TRUSTED_PROXIES = "fdaa::/16"` line is what lets Gin read the real
+client address from `X-Forwarded-For`. Without it, the rate limiter
+treats every request as coming from Fly's load balancer.
+
+The `HSTS_MAX_AGE` and `CSP_REPORT_ONLY` values satisfy the fail-closed
+checks. With them set, the boot succeeds. Without them, it fails with a
+message naming the missing variable.
+
 <<<
 
 == Testing
@@ -553,12 +659,19 @@ make test-coverage-src     # report excluding generated/wiring packages
 === How the test database works
 
 `internal/testutil` is the harness. Its `Setup()` function, called from
-each DB-dependent package's `TestMain`, does four things:
+each DB-dependent package's `TestMain`, does five things:
 
+. Loads the SOPS secrets so the test database password is available.
 . Opens a pool to the database named by `TEST_DB_*`.
 . Resets the schema (`DROP SCHEMA public CASCADE; CREATE SCHEMA public`).
 . Runs the migrations in-process.
 . Seeds the demo users.
+
+The credentials load is the v0.8.4 addition: without it, the test
+database password (which lives in `secrets/secrets.enc.yaml`) is not in
+the environment and the connection fails with a confusing
+"password authentication failed" rather than a clear message about the
+missing secret.
 
 === Safety guards
 
@@ -576,9 +689,9 @@ Source-only coverage is approximately 58%. The per-package figures:
 |===
 | Package | Coverage
 
-| `internal/auth` | ~78%
+| `internal/auth` | ~80%
 | `internal/handler` | ~62%
-| `internal/middleware` | ~88%
+| `internal/middleware` | ~90%
 | `internal/service` | ~60%
 | `internal/version` | ~66%
 | `internal/web` | ~70%
@@ -597,8 +710,9 @@ Source-only coverage is approximately 58%. The per-package figures:
 | `LOG_LEVEL` | `debug` \| `info` \| `warn` \| `error` | Minimum level.
 |===
 
-Logs are written to `logs/app.log`. When running in an interactive
-terminal, they are also mirrored to stderr.
+When running in a container, logs go to stderr and the platform
+captures them. When running standalone, `LOG_FILE` can point at a path
+where the process also writes the log; it is unset by default.
 
 === Structured Log Fields
 
@@ -645,7 +759,9 @@ Three token-bucket limiters run by default:
 |===
 
 Buckets are keyed by the client IP returned from Gin's `ClientIP()`,
-which honours the trusted-proxy configuration set on the engine.
+which honours the trusted-proxy configuration set on the engine. The
+trusted-proxy list comes from `TRUSTED_PROXIES` and defaults to empty:
+trust nothing.
 
 === Gzip Compression
 
@@ -664,7 +780,7 @@ response. Full rationale in
 | Header | Default
 
 | `Content-Security-Policy(-Report-Only)` | tailored to HTMX + Tailwind; report-only in dev
-| `Strict-Transport-Security` | disabled (`HSTS_MAX_AGE=0`)
+| `Strict-Transport-Security` | enabled in production (`HSTS_MAX_AGE=31536000`); disabled in development
 | `X-Frame-Options` | `DENY`
 | `X-Content-Type-Options` | `nosniff`
 | `Referrer-Policy` | `strict-origin-when-cross-origin`
@@ -672,6 +788,10 @@ response. Full rationale in
 | `Cross-Origin-Opener-Policy` | `same-origin`
 | `Cross-Origin-Resource-Policy` | `same-origin`
 |===
+
+With `APP_ENV=production`, the loader refuses to return a configuration
+where HSTS is off or CSP is report-only. The boot fails; the error
+names the environment variable to fix.
 
 === Secure Cookies
 
@@ -758,11 +878,11 @@ curl -s http://localhost:8080/version | jq .
 [source,json]
 ----
 {
-  "version": "v0.8.3",
+  "version": "v0.8.4",
   "commit": "9d4e6e335a06",
   "branch": "develop",
-  "state": "v0.8.3",
-  "built": "2026-10-07T10:39:10Z",
+  "state": "v0.8.4",
+  "built": "2026-10-10T10:39:10Z",
   "go": "1.23.0",
   "modified": false
 }
@@ -781,13 +901,13 @@ Then, from `develop`:
 
 [source,bash]
 ----
-git flow release start 0.8.3
+git flow release start 0.8.4
 # update the version lines in the AsciiDoc documents, add a
-# "What's New in v0.8.3" section, rebuild the PDFs, commit
-git flow release finish 0.8.3
+# "What's New in v0.8.4" section, rebuild the PDFs, commit
+git flow release finish 0.8.4
 git push origin main
 git push origin develop
-git push origin v0.8.3
+git push origin v0.8.4
 ----
 
 Do **not** run `git push --tags` — push the single release tag
@@ -911,16 +1031,18 @@ mywebapp/
 │       └── main.go                 # Entry point, middleware wiring
 ├── docs/
 │   ├── images/
+│   ├── diagrams/                   # PlantUML sources (.puml)
 │   ├── age_sops_fly_howto.adoc
 │   ├── security_headers_cookies_csrf_jwtscheme.adoc
+│   ├── webapp_roadmap_v0.8.4.adoc
 │   └── webapp_in_prod_with_docker_and_fly.adoc
 ├── internal/
-│   ├── auth/                       # JWT + bcrypt
+│   ├── auth/                       # JWT + Argon2id
 │   ├── credentials/                # SOPS/age loader
 │   ├── domain/                     # Models, DTOs, errors
 │   ├── handler/                    # JSON API handlers
 │   ├── logging/                    # slog setup
-│   ├── middleware/                 # accesslog, csrf, gzip, ratelimit, requestid, require_role, security_headers
+│   ├── middleware/                 # accesslog, csrf, gzip, ratelimit, requestid, require_role, security_headers, proxies, bodylimit
 │   ├── repository/                 # SQLC-generated
 │   ├── service/                    # business logic
 │   ├── templates/                  # HTMX templates + partials
@@ -950,17 +1072,17 @@ mywebapp/
 ├── go.sum
 ├── package.json
 ├── tailwind.config.js
-├── secrets.enc.yaml                # SOPS-encrypted secrets
+├── secrets/secrets.enc.yaml        # SOPS-encrypted secrets
 └── README.adoc                     # This file
 ----
 
 <<<
 
-== Project inventory for v0.8.3
+== Project inventory for v0.8.4
 
 [[fig-scc-report]]
-.Source code statistics for MyWebApp v0.8.3
-image::docs/images/scc_report_v0.8.3.svg[Source code statistics,align="center",width=100%]
+.Source code statistics for MyWebApp v0.8.4
+image::docs/images/scc_report_v0.8.4.svg[Source code statistics,align="center",width=100%]
 
 <<<
 
@@ -985,6 +1107,19 @@ image::docs/images/scc_report_v0.8.3.svg[Source code statistics,align="center",w
 | `make version-run` | Query `/version` on the running server
 |===
 
+=== Diagrams
+
+[cols="1,3"]
+|===
+| Command | Description
+| `make diagrams` | Render PlantUML sources to `docs/images/`
+| `make diagrams-force` | Re-render all diagrams regardless of timestamps
+| `make diagrams-check` | CI: fail if committed SVGs differ from sources
+| `make diagrams-list` | List diagram sources and their rendered outputs
+| `make diagrams-clean` | Remove rendered SVG files (sources are kept)
+| `make install-plantuml` | Download the PlantUML jar to `~/.local/share/plantuml/`
+|===
+
 === Dependencies
 
 [cols="1,3"]
@@ -992,6 +1127,16 @@ image::docs/images/scc_report_v0.8.3.svg[Source code statistics,align="center",w
 | Command | Description
 | `make install` | Go + Node + dev tools
 | `make generate` | Regenerate SQLC code
+|===
+
+=== Secrets
+
+[cols="1,3"]
+|===
+| Command | Description
+| `make require-sops` | Verify the SOPS file and the sops binary are present
+| `make load-secrets` | Decrypt `DB_PASSWORD` and `TEST_DB_PASSWORD` into `.make-secrets.env`
+| `make clear-secrets` | Remove the cached decrypted passwords
 |===
 
 === Database
@@ -1002,7 +1147,7 @@ image::docs/images/scc_report_v0.8.3.svg[Source code statistics,align="center",w
 | `make migrate-up` | Apply migrations
 | `make migrate-down` | Roll back one migration
 | `make migrate-create name=<name>` | Create a new migration pair
-| `make seed` | Seed demo users (bcrypt-hashed)
+| `make seed` | Seed demo users (Argon2id-hashed)
 | `make db-reset` | stop → migrate-down → migrate-up → seed
 | `make db-shell` | Open `psql`
 | `make db-check` | Verify connection
@@ -1050,10 +1195,11 @@ image::docs/images/scc_report_v0.8.3.svg[Source code statistics,align="center",w
 [cols="1,3"]
 |===
 | Command | Description
-| `make setup` | install → generate → migrate-up → build-css
+| `make setup` | install → generate → migrate-up → build-css → diagrams
 | `make dev-setup` | Same as `setup`, hints at `make dev`
-| `make all` | clean → install → generate → migrate-up → build-css → build
-| `make clean` | Remove binaries, `node_modules`, CSS output
+| `make all` | clean → install → generate → migrate-up → build-css → build → diagrams
+| `make ci` | lint → test → diagrams-check
+| `make clean` | Remove binaries, `node_modules`, CSS output, coverage files
 | `make check-env` | Print loaded environment
 | `make info` | Project metadata
 | `make dirs` | Create standard directory layout
@@ -1120,9 +1266,10 @@ All Users API routes require `Authorization: Bearer <access-token>` and
 [cols="1,2,1"]
 |===
 | Method | Endpoint | Description
-| GET | `/health` | DB ping + pgx pool statistics
+| GET | `/health` | Liveness (no I/O)
+| GET | `/health/ready` | Readiness (cached DB ping)
+| GET | `/admin/health/detail` | Pool statistics (admin only)
 | GET | `/version` | Build metadata as JSON
-| GET | `/test` | Template smoke test
 | GET | `/static/*` | Static assets
 |===
 
@@ -1161,21 +1308,19 @@ GET /health HTTP/1.1
 
 [source,json]
 ----
-{
-    "status": "ok",
-    "time": 1758567833,
-    "pool": {
-        "total": 5,
-        "idle": 5,
-        "acquired": 0,
-        "max": 25,
-        "constructing": 0,
-        "acquire_count": 12,
-        "empty_acquire": 0,
-        "canceled_acquire": 0,
-        "acquire_duration_ms": 3
-    }
-}
+{"status":"ok"}
+----
+
+==== Readiness
+
+[source,http]
+----
+GET /health/ready HTTP/1.1
+----
+
+[source,json]
+----
+{"status":"ok"}
 ----
 
 ==== Version
@@ -1188,11 +1333,11 @@ GET /version HTTP/1.1
 [source,json]
 ----
 {
-  "version": "v0.8.3",
+  "version": "v0.8.4",
   "commit": "9d4e6e335a06",
   "branch": "develop",
-  "state": "v0.8.3",
-  "built": "2026-10-07T10:39:10Z",
+  "state": "v0.8.4",
+  "built": "2026-10-10T10:39:10Z",
   "go": "1.23.0",
   "modified": false
 }
@@ -1223,6 +1368,13 @@ The application fails fast when `AGE_KEY` is absent. Supply it at
 runtime via `--env-file`, `-e`, or a Fly Secret. Never bake it into the
 image or commit it. See
 link:docs/webapp_in_prod_with_docker_and_fly.adoc[the Docker/Fly doc].
+
+==== Fail-Closed Boot on Missing Security Configuration
+
+With `APP_ENV=production` or `staging`, the boot fails if
+`HSTS_MAX_AGE=0` or `CSP_REPORT_ONLY=true`. The error names the
+offending variable. Either set the production values, or set
+`APP_ENV=development` for local work.
 
 ==== SQLC Generation Fails
 
@@ -1311,6 +1463,17 @@ make test-db-check
 make test-db-create
 ----
 
+Or, if the test binary reports that the credentials could not be
+loaded:
+
+[source,bash]
+----
+# Confirm AGE_KEY or the default key file is present.
+ls -la ~/.config/sops/age/keys.txt
+# Confirm the SOPS file decrypts.
+sops --decrypt secrets/secrets.enc.yaml > /dev/null && echo ok
+----
+
 ==== `multiple definitions of TestMain`
 
 [source,bash]
@@ -1339,6 +1502,7 @@ LOG_LEVEL=debug
 * Tail the structured logs: `make logs`
 * Grep one request: `grep '"request_id":"..."' logs/app.log`
 * Check the health endpoint: `curl localhost:8080/health | jq`
+* Check the readiness endpoint: `curl localhost:8080/health/ready | jq`
 * Check the running version: `curl localhost:8080/version | jq`
 * Inspect active sessions:
 +
@@ -1356,6 +1520,7 @@ psql -d mywebapp -c "SELECT jti, user_id, issued_at, expires_at, revoked_at FROM
 ** https://github.com/golang-jwt/jwt
 ** https://getsops.io/
 ** https://age-encryption.org/
+** https://www.rfc-editor.org/rfc/rfc9106.html (Argon2)
 
 <<<
 
@@ -1386,8 +1551,11 @@ psql -d mywebapp -c "SELECT jti, user_id, issued_at, expires_at, revoked_at FROM
   `authMW` on that route.
 * New DB-dependent tests should call `testutil.NewPool(t)`, never
   `db.LoadConfig()` or `db.NewPool()`.
-* Secrets belong in `secrets.enc.yaml`, never in `.env`, `fly.toml`,
-  or a committed env file.
+* Secrets belong in `secrets/secrets.enc.yaml`, never in `.env`,
+  `fly.toml`, or a committed env file.
+* Security-sensitive configuration (`TRUSTED_PROXIES`, `HSTS_MAX_AGE`,
+  `CSP_REPORT_ONLY`) must have a safe default. A missing value in
+  production should fail the boot, not silently fall back.
 
 == License
 
@@ -1397,6 +1565,6 @@ for details.
 == Contact
 
 * Author: patrick toca
-* Email: link:mailto:[pmjtoca@gmail.com]
+* Email: link:mailto:pmjtoca@gmail.com[pmjtoca@gmail.com]
 * Issue Tracker: https://github.com/yourusername/mywebapp/issues
 * Repository: https://github.com/yourusername/mywebapp

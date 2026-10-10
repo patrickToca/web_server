@@ -66,16 +66,20 @@ By the end of this document you will be able to:
 
 == The design in one diagram
 
-The flow of a secret from your editor to the running process:
-
-[[fig-credentials-flow]]
-.Request credentials flow with age, sops and fly in prod or in dev
-image::images/credentials_flow.svg[Credentials-flow diagram,align="center",width=100%]
-
 The ciphertext is public. It lives in git, it is in the container
 image, and anyone with a copy of the repository can see it. The
 **only** thing that is secret is the age private key, which lives on
 your machine and in Fly's encrypted vault, and nowhere else.
+
+The flow of a secret from your editor to the running process:
+
+<<<
+
+[[fig-credentials-flow]]
+.Request credentials flow with age, sops and fly in prod or in dev
+image::images/credentials_flow_v0.8.4.svg[Credentials-flow diagram,align="center",width=100%]
+
+<<< The flow of a secret from your editor to the running process:The flow of a secret from your editor to the running process:
 
 Two properties follow from this design:
 
