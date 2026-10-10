@@ -53,27 +53,15 @@ COPY secrets/secrets.enc.yaml /app/secrets/secrets.enc.yaml
 # but defaults here make the image runnable standalone with docker run.
 #
 # SOPS_PATH is the absolute path to the encrypted secrets file. It
-# matches the COPY destination above.
-#
-# HSTS and CSP are set to their production values. The loader in
-# internal/middleware/security_headers.go refuses to return a
-# configuration with HSTS off or a report-only CSP when APP_ENV is
-# production. Without these, the boot fails in the image. Fly's [env]
-# block overrides them with the same values.
-#
-# COOKIE_SECURE is left at its default (true). For local testing over
-# plain HTTP, pass -e COOKIE_SECURE=false on the docker run command
-# line; the browser will not send a Secure cookie over http://.
-ENV APP_ENV=development \
+# matches the COPY destination above. Setting it here means the image
+# is self-contained; fly.toml's [env] block will override it with the
+# same value.
+ENV APP_ENV=production \
     PORT=8080 \
     LOG_FORMAT=json \
     LOG_LEVEL=info \
     GIN_MODE=release \
-    SOPS_PATH=/app/secrets/secrets.enc.yaml \
-    HSTS_MAX_AGE=31536000 \
-    HSTS_INCLUDE_SUBDOMAINS=true \
-    HSTS_PRELOAD=false \
-    CSP_REPORT_ONLY=false
+    SOPS_PATH=/app/secrets/secrets.enc.yaml
 
 USER app
 

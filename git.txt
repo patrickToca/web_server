@@ -1,0 +1,21 @@
+git commit -m "$(cat <<'EOF'
+chore(docker): set production security posture in image
+
+- The image now sets HSTS_MAX_AGE, HSTS_INCLUDE_SUBDOMAINS, and
+CSP_REPORT_ONLY in its ENV block. Without these, the fail-closed
+check in LoadSecurityHeadersConfig aborts the boot with
+"insecure security-headers configuration" when APP_ENV is
+production. With them, the image is self-contained and can be run
+standalone with docker run.
+
+- .env.docker.local gains the same variables plus APP_ENV=production
+and COOKIE_SECURE=false for local HTTP testing. The file remains
+gitignored.
+
+Verified: the container boots with
+  - security headers configuration hsts_max_age=31536000
+  - hsts_include_subdomains=true hsts_preload=false csp_report_only=false
+and the login flow returns a 302 with the rotated CSRF cookie and
+the access and refresh cookies.
+EOF
+)"
