@@ -12,7 +12,6 @@ ifdef::env-github,env-browser[:outfilesuffix: .adoc]
 :docdir: ../docs
 :sectnums:
 :sectnumlevels: 3
-:description: The `SecurityHeaders` middleware (`pass:[internal/middleware/security_headers.go]`) sets defence-in-depth HTTP response headers on every request, `pass:[internal/web/cookies.go]` controls the attributes on the auth and CSRF cookies, `pass:[internal/middleware/csrf.go]` enforces the signed double-submit cookie pattern on every mutating request, `pass:[internal/auth/jwt.go]` issues short-lived access tokens with long-lived, revocable refresh tokens, `pass:[internal/middleware/require_role.go]` enforces role-based authorization, `pass:[pkg/r2/client.go]` serves a private welcome image from Cloudflare R2 through presigned URLs, and `pass:[internal/version/version.go]` injects git-derived build metadata exposed publicly at `GET /version`. A separate test database environment (`pass:[internal/testutil]`) exercises the whole stack against an isolated PostgreSQL instance.
 :keywords: go, gin, htmx, tailwind, postgresql, sqlc, slog, jwt, rate limiting, gzip, clean architecture, csp, hsts, cookies, samesite, csrf, double-submit, hmac, access-token, refresh-token, session, revocation, authorization, rbac, cloudflare, r2, presigned-url, dataflow, versioning, home-page, members, testing, test-database
 :sectanchors:
 :sectlinks:
@@ -31,6 +30,13 @@ Creation Date: September 6th, 2026
 Author: {author_name}
 
 Email: {author_email}
+
+<<<
+
+== Overview
+
+The `SecurityHeaders` middleware (`pass:[internal/middleware/security_headers.go]`) sets defence-in-depth HTTP response headers on every request, `pass:[internal/web/cookies.go]` controls the attributes on the auth and CSRF cookies, `pass:[internal/middleware/csrf.go]` enforces the signed double-submit cookie pattern on every mutating request, `pass:[internal/auth/jwt.go]` issues short-lived access tokens with long-lived, revocable refresh tokens, `pass:[internal/middleware/require_role.go]` enforces role-based authorization, `pass:[pkg/r2/client.go]` serves a private welcome image from Cloudflare R2 through presigned URLs, and `pass:[internal/version/version.go]` injects git-derived build metadata exposed publicly at `GET /version`. A separate test database environment (`pass:[internal/testutil]`) exercises the whole stack against an isolated PostgreSQL instance.
+
 
 <<<
 

@@ -1,0 +1,678 @@
+:doctype: article
+:toc: left
+:toc-title: Contents
+:icons: font
+:source-highlighter: coderay
+:author_name: patrick toca
+:author_email: link:mailto:[pmjtoca@gmail.com]
+:stylesheet: ../../asciidoctor.css
+:pdf-theme: ../../uked-theme.yml
+:relfileprefix: ./
+ifdef::env-github,env-browser[:outfilesuffix: .adoc]
+:docdir: ../docs
+:sectnums:
+:sectnumlevels: 3
+:keywords: go, gin, htmx, tailwind, postgresql, sqlc, slog, jwt, rate limiting, gzip, clean architecture, csp, hsts, cookies, samesite, csrf, double-submit, hmac, access-token, refresh-token, session, revocation, authorization, rbac, cloudflare, r2, presigned-url, dataflow, versioning, home-page, members, testing, test-database
+:sectanchors:
+:sectlinks:
+:highlightjs-languages: go,bash,properties,sql
+:experimental:
+
+= mywebapp Security and Reliability Roadmap
+
+{author_name}
+v0.8.4, October 10th, 2026
+
+'''
+
+Creation Date: September 6th, 2026
+
+Author: {author_name}
+
+Email: {author_email}
+
+<<<
+
+== Document purpose
+
+This document lists the security and reliability work that remains for
+`mywebapp`, ordered by when each item should be done. It is a
+snapshot: the state of the roadmap on 2026-10-10, after the v0.8.4
+release.
+
+Two things to understand about how the list is written:
+
+* Items are grouped by *when* they should be done, not by *what* they
+  are. An authentication change and a database change can be in the
+  same group if they are urgent together.
+* Every item names where the change lives, why it matters, and roughly
+  how long it takes. The estimate is a range for one competent Go
+  engineer working alone; it includes tests.
+
+The list is intentionally conservative. Most items are hours, not
+days, and the ones that are days are the ones worth doing carefully.
+
+<<<
+
+== Baseline
+
+State of the project as of the last green `make test` before this
+document was written:
+
+[cols="1,3"]
+|===
+| Check | Result
+
+| `make lint`
+| Clean. Three `QF1008` selectors were simplified during v0.8.4.
+
+| `make test`
+| Every test passes. The full suite runs in roughly two minutes on an
+| idle development machine.
+
+| Credentials loader
+| Decrypts `secrets/secrets.enc.yaml` at boot, exports six secrets.
+| Verified by `count=6` in the boot log.
+
+| Password hashing
+| Argon2id. 64 MiB memory, 3 iterations, 2 threads. 90–160 ms per
+| hash on the development machine.
+
+| Trusted proxies
+| Loaded from `TRUSTED_PROXIES`. Default is empty (trust nothing).
+
+| HSTS and CSP
+| `LoadSecurityHeadersConfig` refuses to return a config with HSTS
+| off or a CSP in report-only mode when `APP_ENV` is production or
+| staging. Development tolerates both.
+
+| Application boot
+| Serves HTTP on port 8080. The home page renders with the R2 welcome
+| image when the R2 credentials are present.
+
+| Development environment
+| Shell startup is fast. GoLand no longer competes for CPU after
+| excluding `bin/`, `logs/`, `node_modules/`, and `coverage.*` from
+| the indexer.
+|===
+
+<<<
+
+== Done — no longer on the list
+
+These items were on earlier versions of this document. They are
+complete and are kept here only as a record of what has changed.
+
+[cols="1,4"]
+|===
+| # | Item
+
+| 1
+| **Fail-closed JWT and CSRF secrets.** 12 passing tests across
+  `internal/auth` and `internal/middleware`. A missing or short secret
+  aborts the boot in production and staging.
+
+| 2
+| **`DeleteUser` revokes sessions in the same transaction.**
+  `TestUserService_DeleteUser_RevokesSessions` and
+  `TestUserService_DeleteUser_RollsBackOnRevokeFailure`.
+
+| 3
+| **`UpdateUserRole` revokes sessions in the same transaction.**
+  `TestUserService_UpdateUserRole_RevokesSessions` and
+  `TestUserService_UpdateUserRole_RollsBackOnRevokeFailure`.
+
+| 4
+| **Global request body limit.** Four tests in `internal/middleware`.
+
+| 5
+| **SOPS + age + Fly Secrets credentials migration.** The boot log
+  shows `credentials loaded count=6`. Every database-dependent test
+  runs against a real database.
+
+| 6
+| **Test isolation.** Each test owns its user. No cross-test failures.
+
+| 7
+| **Argon2id password hashing.** Nine tests. Parameters land in the
+  OWASP performance envelope for interactive login.
+
+| 8
+| **Makefile SOPS-aware database targets.** The `load-secrets` target
+  decrypts once per invocation and caches the values in
+  `.make-secrets.env` at mode 0600.
+
+| 9
+| **Seed program loads its own credentials.** `scripts/seed.go` calls
+  `credentials.Load()` before opening the pool and runs standalone.
+
+| 10
+| **Diagram output routes to `docs/images/`.** Four targets:
+  `diagrams`, `diagrams-check`, `diagrams-list`, `diagrams-force`.
+
+| 11
+| **`.gitignore` names every plaintext form explicitly.**
+  `git check-ignore` reports exactly the files that should be ignored.
+
+| 12
+| **Narrow trusted proxies.** `LoadTrustedProxies` reads a
+  comma-separated CIDR list from `TRUSTED_PROXIES`. Empty default.
+  Ten tests.
+
+| 13
+| **Secure defaults for HSTS and CSP.**
+  `LoadSecurityHeadersConfig` returns an error in production and
+  staging when HSTS is off or CSP is report-only. Eight new tests.
+
+| 14
+| **Three `QF1008` lint fixes.** Simplified redundant embedded-field
+  selectors in `internal/auth/jwt.go` and
+  `internal/middleware/gzip.go`.
+|===
+
+<<<
+
+== Urgent — do before the next deploy
+
+These are the items that would let someone do something they should
+not be able to do, or that would let a single bad day become a bad
+week. They are small, and they belong in the same PR as the
+deployment configuration if you can still fit them.
+
+=== Item 1 — Access-token revocation
+
+[cols="1,3"]
+|===
+| Where | `internal/web/auth_middleware.go`, `internal/auth/jwt.go`
+
+| Why
+| The access token is valid for its full TTL (15 minutes by default)
+  even after a role change, a deactivation, or a deletion. The refresh
+  path reloads the user and fails, but the access path does not. A
+  demoted admin keeps admin access for up to 15 minutes.
+
+| How (cheap)
+| Shorten `JWT_ACCESS_TTL` to 2 minutes and rely on silent refresh.
+  The window shrinks to 2 minutes. The cost is more frequent
+  refreshes, which is fine at the current scale.
+
+| How (full)
+| Add a `jti` claim to access tokens and have `AuthMiddleware` check
+  the session table on every request. One indexed lookup per request.
+  Closes the window entirely.
+
+| Estimate
+| 2 hours for the cheap version, 4–6 hours for the full version.
+|===
+
+Recommendation: the cheap version for now. The full version is
+justified when the user base is large enough that a two-minute window
+matters.
+
+=== Item 2 — Deploy to Fly with the v0.8.4 configuration
+
+[cols="1,3"]
+|===
+| Where | `fly.toml`
+
+| Why
+| The fail-closed checks added in v0.8.4 will refuse to start in
+  production if `HSTS_MAX_AGE` is 0 or `CSP_REPORT_ONLY` is true.
+  `fly.toml` must set the production values, and `TRUSTED_PROXIES`
+  must be set to `fdaa::/16` so the rate limiter keys on the real
+  client address rather than on the load balancer.
+
+| How
+| Confirm the `[env]` block in `fly.toml` contains:
+
+  * `APP_ENV = "production"`
+  * `HSTS_MAX_AGE = "31536000"`
+  * `CSP_REPORT_ONLY = "false"`
+  * `COOKIE_SECURE = "true"`
+  * `TRUSTED_PROXIES = "fdaa::/16"`
+
+| Estimate
+| 15 minutes to verify, then a deploy and a read of the boot log.
+|===
+
+After the deploy, `fly logs` should contain:
+
+[source]
+----
+INFO trusted proxies configured cidrs=[fdaa::/16]
+INFO security headers configuration hsts_max_age=31536000 hsts_include_subdomains=true hsts_preload=false csp_report_only=false
+----
+
+If either line is missing or shows different values, the configuration
+did not reach the process and the boot may have failed. The log names
+the reason.
+
+<<<
+
+== High — do before real users
+
+These items do not let an attacker in today, but they would embarrass
+you or fail an audit once there are users you do not personally know.
+
+=== Item 3 — Account lockout
+
+[cols="1,3"]
+|===
+| Where
+| New `internal/service/login_attempts.go` and a small table.
+
+| Why
+| The login endpoint is rate-limited per IP. A botnet spread across
+  many IPs can attack one account without triggering the limit. There
+  is no per-account counter and no lockout.
+
+| How
+| A `login_attempts` table with `email`, `count`, and
+  `last_attempt_at`. Increment on failed login, clear on success.
+  Refuse further attempts for a cooldown period after a threshold
+  (say 10 failures, 15-minute cooldown). Log every lockout at `warn`
+  level so it is visible in `fly logs`.
+
+| Estimate
+| 1 day, including the migration, the service, the tests, and the
+  wiring into `AuthHandler.Login`.
+|===
+
+=== Item 4 — Audit log
+
+[cols="1,3"]
+|===
+| Where
+| New table `audit_log`, new package `internal/audit`, call sites in
+  `UserService.UpdateUserRole`, `UserService.DeleteUser`,
+  `UserService.UpdateUser` (on activation change), and
+  `AuthHandler.Login` (on failure).
+
+| Why
+| There is no record of who changed whose role, who deleted whom, who
+  failed to log in. In an incident, the HTTP access log names the
+  request but not the actor or the target. Regulators, lawyers, and
+  your future self will ask.
+
+| How
+| A table with `at`, `actor_id`, `action`, `target_id`, and `detail`
+  (JSONB). A writer function that takes the request context so the
+  actor and the request ID come along. Four call sites. A read-only
+  view under `/admin/audit` for the admin to see recent entries.
+
+| Estimate
+| 1 day, including the migration, the writer, the four call sites, the
+  view, and the tests.
+|===
+
+=== Item 5 — Escape wildcards in `SearchUsers`
+
+[cols="1,3"]
+|===
+| Where | `internal/service/user_service.go`, `SearchUsers`
+
+| Why
+| The SQL is parameterised, so there is no injection. But `%` and `_`
+  in the user-supplied search string are treated as wildcards by
+  `ILIKE`. A search for `%` matches every row; a search for `_`
+  matches any single character. This is a usability and performance
+  problem rather than a security one.
+
+| How
+| Escape `%`, `_`, and `\` in the Go layer before passing the string
+  to the query. Change the SQL to use `ESCAPE '\'`.
+
+| Estimate | 1 hour, including a test.
+|===
+
+=== Item 6 — `pg_trgm` index on the searched columns
+
+[cols="1,3"]
+|===
+| Where | A new migration.
+
+| Why
+| `SearchUsers` does `ILIKE '%term%'` on `username`, `email`, and
+| `full_name`. Without a trigram index, each search is a sequential
+| scan. At a few hundred users this is invisible; at ten thousand it
+| is the slowest query in the application.
+
+| How
+| `CREATE EXTENSION IF NOT EXISTS pg_trgm;` and
+  `CREATE INDEX ... USING gin (username gin_trgm_ops)` on each of
+  the three columns. The extension is available in Fly Postgres by
+  default.
+
+| Estimate
+| 1 hour.
+|
+
+|===
+
+<<<
+
+== Medium — do when you have a quiet week
+
+These items make the system better in ways that will not show up as
+failures. They are worth doing, but nothing breaks if they wait.
+
+=== Item 7 — Nonce-based CSP
+
+[cols="1,3"]
+|===
+| Where
+| `internal/middleware/security_headers.go`, every template.
+
+| Why
+| The current CSP allows `'unsafe-inline'` and `'unsafe-eval'` in
+  `script-src`. Both are needed because HTMX's `hx-on` attributes and
+  the inline `<script>` blocks in the templates are not compatible
+  with a stricter policy. The consequence is that any XSS that lands
+  in a template is unrestricted.
+
+| How
+| Generate a nonce per request, inject it into every `<script>` tag,
+  and drop `'unsafe-inline'`. HTMX's `hx-on` uses `new Function`, so
+  `'unsafe-eval'` cannot be dropped without replacing `hx-on` with
+  external event listeners. That is a larger change and can be done
+  as a follow-up.
+
+| Estimate
+| 1 day for the nonce plumbing, half a day for the template audit,
+  half a day for the `hx-on` replacement if you decide to do it.
+|===
+
+=== Item 8 — CSRF token bound to the session
+
+[cols="1,3"]
+|===
+| Where | `internal/middleware/csrf.go`, `AuthHandler.issueTokens`
+
+| Why
+| The CSRF token is signed by the server, so it proves the token was
+  issued by this server. It does not prove it was issued to *this
+  user*. A subdomain XSS, a cookie-tossing attack, or a shared browser
+  profile can move a valid CSRF token from one session to another.
+
+| How
+| Include the refresh token's `jti` (or the user ID) in the CSRF
+  token's HMAC input. On validation, look up the session and confirm
+  the token was issued for it. This turns the double-submit cookie
+  into a synchronizer token.
+
+| Estimate
+| 4 hours, including the schema change to record which session issued
+  the token.
+|===
+
+=== Item 9 — Configurable Argon2id parameters
+
+[cols="1,3"]
+|===
+| Where | `internal/auth/password.go`
+
+| Why
+| The parameters (64 MiB, 3 iterations, 2 threads) are compile-time
+  constants. On a slower CPU — Fly's `shared-cpu-1x`, for example —
+  the hash may take longer than the target 100–200 ms. Making the
+  memory and iteration counts configurable via environment variables,
+  with a default that matches the current values, allows
+  per-environment tuning without a code change.
+
+| How
+| Read `ARGON2_MEMORY_KIB` and `ARGON2_ITERATIONS` from the
+  environment, defaulting to the current constants. `HashPassword`
+  uses them; `NeedsRehash` compares the stored parameters to the
+  current ones. The `NeedsRehash` path already exists and works.
+
+| Estimate
+| 2 hours, including tests for the environment parsing and the
+  rehash-detection behaviour under changed parameters.
+|===
+
+=== Item 10 — Session cap per user
+
+[cols="1,3"]
+|===
+| Where | `internal/service/session_service.go`
+
+| Why
+| A user can accumulate unlimited session rows. Each login creates
+  one. A long-lived account with a bot that logs in repeatedly fills
+  the table. `RevokeAllUserSessions` mitigates on role change, but
+  that is not a general solution.
+
+| How
+| Before creating a new session, count the active sessions for the
+  user. If the count exceeds a cap (say 10), revoke the oldest. One
+  query, one transaction.
+
+| Estimate | 2 hours.
+|===
+
+=== Item 11 — Structured audit of the boot sequence
+
+[cols="1,3"]
+|===
+| Where | `cmd/api/main.go`
+
+| Why
+| When a boot fails, the log line names the failure but not the state
+  that caused it. A boot log that records the resolved `SOPS_PATH`,
+  the environment, the pool configuration, and the JWT and CSRF TTLs
+  makes every "why did it fail on Fly but work locally" question
+  answerable from a single `fly logs` capture.
+
+| How
+| A `slog.Info` line after each major step, with the values that step
+  resolved. Most of this is already in the log; the gap is the
+  credentials path and the pool configuration.
+
+| Estimate | 1 hour.
+|===
+
+<<<
+
+== Low — polish
+
+These items improve the project but are not on any critical path.
+
+=== Item 12 — Pre-commit hook to prevent secret commits
+
+[cols="1,3"]
+|===
+| Where
+| `.pre-commit-config.yaml` or a shell script at `.git/hooks/pre-commit`.
+
+| Why
+| The `.env` incident is what surfaced the whole secrets conversation.
+  A hook that scans staged files for `SECRET=`, `PASSWORD=`,
+  `API_KEY=` patterns, and for the age private key format
+  (`AGE-SECRET-KEY-1`), would have caught it at the commit.
+
+| Estimate | 1 hour.
+|===
+
+=== Item 13 — Log the resolved age key fingerprint at boot
+
+[cols="1,3"]
+|===
+| Where | `internal/credentials/credentials.go`
+
+| Why
+| When a boot fails with "no age key available", it is useful to know
+  whether the key file is missing, the environment variable is empty,
+  or the key is present but for the wrong recipient. A log line with
+  the first 8 bytes of a hash of the public key makes this a one-line
+  diagnosis.
+
+| How
+| After `ensureAgeKey`, derive the public key from the loaded key,
+  hash it, and log the first 8 bytes. The public key is not sensitive;
+  the hash is a stable identifier.
+
+| Estimate | 1 hour.
+|===
+
+=== Item 14 — `DATABASE_URL` support in `db.LoadConfig`
+
+[cols="1,3"]
+|===
+| Where | `pkg/db/config.go`
+
+| Why
+| `fly postgres attach` sets `DATABASE_URL` on the application and
+  sets the individual `DB_*` variables only if you ask it to. Reading
+  `DATABASE_URL` when present, and falling back to the individual
+  variables, makes the Fly attach workflow seamless. It also makes
+  the application portable to any platform that passes a
+  `DATABASE_URL` (Heroku, Render, Railway, most Docker Compose
+  setups).
+
+| How
+| In `LoadConfig`, if `DATABASE_URL` is set, parse it with
+  `pgx.ParseConfig` and populate the fields. Otherwise use the
+  existing `DB_*` variables. Ten lines.
+
+| Estimate | 2 hours.
+|===
+
+=== Item 15 — Redact sensitive fields in `/admin/health/detail`
+
+[cols="1,3"]
+|===
+| Where | `internal/web/health_handler.go`
+
+| Why
+| The detail endpoint returns `cfg.ConnConfig.Host` and
+  `cfg.ConnConfig.Database`. Admin-only, so acceptable, but on a
+  shared host the database name can be sensitive.
+
+| How
+| Replace the host and database with stable hashes, or omit them.
+
+| Estimate | 30 minutes.
+|===
+
+=== Item 16 — Validate the inbound `X-Request-ID`
+
+[cols="1,3"]
+|===
+| Where | `internal/middleware/requestid.go`
+
+| Why
+| The middleware echoes the inbound `X-Request-ID` header verbatim.
+  An attacker can inject control characters or an over-long value.
+  Go's `http.Header.Set` refuses values with `\n`, so the header is
+  safe, but the value is also written into logs. Some log handlers do
+  not escape.
+
+| How
+| Validate the inbound ID against `^[A-Za-z0-9_-]{1,64}$`. If it does
+  not match, generate a new one.
+
+| Estimate | 30 minutes.
+|===
+
+=== Item 17 — Benchmark the Argon2id parameters on Fly
+
+[cols="1,3"]
+|===
+| Where
+| A one-off measurement, not a code change.
+
+| Why
+| The parameters were tuned on the development machine. Fly's
+  `shared-cpu-1x` is slower. If the hash takes more than 500 ms, the
+  login feels slow and the CPU is spent on authentication.
+
+| How
+| `fly ssh console` into the application, then:
+
+[source,bash]
+----
+time curl -sS -X POST http://localhost:8080/api/v1/auth/token \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"alice@example.com","password":"password123"}' > /dev/null
+----
+
+Run it three times and take the median. If the round-trip is over
+1 second, lower `argon2Memory` to 32 MiB and raise `argon2Iterations`
+to 4.
+
+| Estimate | 30 minutes.
+|===
+
+<<<
+
+== Summary
+
+[cols="2,1"]
+|===
+| When | Items
+
+| Before the next deploy
+| 1 (access-token TTL), 2 (Fly configuration verification)
+
+| Before real users
+| 3 (lockout), 4 (audit log), 5 (wildcard escape), 6 (trigram index)
+
+| When there is time
+| 7 (nonce CSP), 8 (CSRF binding), 9 (Argon2id parameters),
+  10 (session cap), 11 (boot logging)
+
+| Polish
+| 12–17
+|===
+
+<<<
+
+== Suggested schedule
+
+A concrete plan for the next seven days:
+
+[cols="1,3"]
+|===
+| Day | Work
+
+| Today
+| Item 2 (verify `fly.toml`, deploy). Fifteen minutes, and it is the
+  gate for the deployment.
+
+| Day 1
+| Item 1 (shorten `JWT_ACCESS_TTL` to 2 minutes and update the
+  documentation). Half a day at most.
+
+| Day 2–3
+| Item 4 (audit log). The item with the most future value; it pays
+  for itself the first time someone asks "who changed this".
+
+| Day 4–5
+| Item 3 (account lockout). The last of the "before real users"
+  items.
+
+| Day 6–7
+| Items 5, 6, 11, 14, 16. The small ones, batched. Each is under
+  two hours.
+|===
+
+The remaining items — 7, 8, 9, 10, 12, 13, 15, 17 — can be done
+opportunistically when the surrounding code is being touched. That is
+how lists like this actually get finished: not by scheduling every
+item, but by picking them up when the opportunity is adjacent.
+
+<<<
+
+== Changes since the previous roadmap
+
+* **Items 1 and 2 from the previous list are done.** Trusted proxies
+  and fail-closed HSTS/CSP defaults are in place, tested, and
+  verified by the current test suite.
+* **The `QF1008` lint fixes are done.** Three redundant
+  embedded-field selectors were simplified; `make lint` is clean.
+* **A new item (17) was added.** Benchmarking the Argon2id parameters
+  on Fly closes the loop on the parameter tuning that was done on the
+  development machine. It is a measurement, not a code change.
+* **Item numbering has shifted.** Use this document's numbering going
+  forward. Cross-references to earlier roadmap versions will not
+  match.
